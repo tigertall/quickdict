@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.tigertall.QuickDict</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>QuickDict</name>
+  <summary>Look up words in dictionaries</summary>
+  <description>
+    <p>
+      A modern GNOME dictionary application supporting Stardict format dictionaries.
+      Features include multi-dictionary search, fuzzy matching, clipboard monitoring
+      for quick word lookup, and a clean Adwaita interface.
+    </p>
+    <p>
+      NOTE: For screen word capture, please install the <em>quickdict-focus</em> GNOME Shell extension. 
+    </p>
+  </description>
+  <url type="homepage">https://github.com/tigertall/quickdict</url>
+  <url type="bugtracker">https://github.com/tigertall/quickdict/issues</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Main window</caption>
+      <image>https://raw.githubusercontent.com/tigertall/quickdict/main/screenshots/main-window.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Word Capture</caption>
+      <image>https://raw.githubusercontent.com/tigertall/quickdict/main/screenshots/word-capture.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Preferences</caption>
+      <image>https://raw.githubusercontent.com/tigertall/quickdict/main/screenshots/preferences.png</image>
+    </screenshot>
+  </screenshots>
+  <developer_name>QuickDict Team</developer_name>
+  <releases>
+    <release version="0.1.0" date="2026-07-12">
+      <description>
+        <p>Initial release.</p>
+      </description>
+    </release>
+  </releases>
+  <launchable type="desktop-id">io.github.tigertall.QuickDict.desktop</launchable>
+  <content_rating type="oars-1.1" />
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>touch</control>
+  </supports>
+</component>

@@ -1,0 +1,3 @@
+# List of source files containing translatable strings
+data/org.gnome.QuickDict.desktop.in
+data/org.gnome.QuickDict.metainfo.xml.in

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.quickdict-focus" path="/org/gnome/shell/extensions/quickdict-focus/">
+    <key name="clipboard-monitor" type="b">
+      <default>true</default>
+      <summary>Enable clipboard monitor</summary>
+      <description>Monitor PRIMARY selection for word lookup.</description>
+    </key>
+    <key name="app-filter" type="s">
+      <default>"org.gnome.Papers,com.github.johnfactotum.Foliate"</default>
+      <summary>App ID whitelist</summary>
+      <description>Comma-separated list of App IDs to filter. Empty means allow all.</description>
+    </key>
+  </schema>
+</schemalist>

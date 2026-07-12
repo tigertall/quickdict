@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="quickdict">
+  <schema id="io.github.tigertall.QuickDict" path="/io/github/tigertall/QuickDict/">
+    <!-- 词典搜索路径 -->
+    <key name="dictionary-paths" type="as">
+      <default>[]</default>
+      <summary>Dictionary search paths</summary>
+      <description>List of directories to scan for Stardict dictionaries.</description>
+    </key>
+    <!-- 最大搜索结果数 -->
+    <key name="max-results" type="i">
+      <default>50</default>
+      <range min="10" max="500"/>
+      <summary>Maximum search results</summary>
+      <description>Maximum number of results displayed in the search list.</description>
+    </key>
+    <!-- 模糊匹配阈值 -->
+    <key name="fuzzy-threshold" type="i">
+      <default>3</default>
+      <range min="1" max="10"/>
+      <summary>Fuzzy match threshold</summary>
+      <description>Maximum edit distance for fuzzy matching (Levenshtein distance).</description>
+    </key>
+    <!-- 窗口宽度 -->
+    <key name="window-width" type="i">
+      <default>900</default>
+      <summary>Window width</summary>
+      <description>Default width of the main window in pixels.</description>
+    </key>
+    <!-- 窗口高度 -->
+    <key name="window-height" type="i">
+      <default>600</default>
+      <summary>Window height</summary>
+      <description>Default height of the main window in pixels.</description>
+    </key>
+    <!-- 词典扫描结果缓存 -->
+    <key name="scanned-dicts" type="as">
+      <default>[]</default>
+      <summary>Scanned dictionary results</summary>
+      <description>Cached scan results (format: Kind:Name=path).</description>
+    </key>
+    <!-- 词典显示顺序 -->
+    <key name="dict-order" type="as">
+      <default>[]</default>
+      <summary>Dictionary display order</summary>
+      <description>Ordered list of dict keys (format: Kind:Name).</description>
+    </key>
+    <!-- 百度翻译 App ID -->
+    <key name="baidu-appid" type="s">
+      <default>""</default>
+      <summary>Baidu App ID</summary>
+      <description>App ID for Baidu LLM Text Translation API.</description>
+    </key>
+    <!-- 百度翻译 API Key -->
+    <key name="baidu-apikey" type="s">
+      <default>""</default>
+      <summary>Baidu API Key</summary>
+      <description>API Key for Baidu LLM Text Translation API.</description>
+    </key>
+    <!-- 百度翻译启用状态 -->
+    <key name="baidu-enabled" type="b">
+      <default>true</default>
+      <summary>Baidu Translate enabled</summary>
+      <description>Whether Baidu Translate is enabled.</description>
+    </key>
+    <!-- 词典活跃状态（所有类型） -->
+    <key name="dict-active-states" type="as">
+      <default>[]</default>
+      <summary>Dictionary active states</summary>
+      <description>List of dict active states (format: Kind:Name=true/false).</description>
+    </key>
+  </schema>
+</schemalist>

@@ -1,0 +1,65 @@
+[package]
+name = "quickdict"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.78"
+description = "A modern dictionary application with StarDict and DICT protocol support"
+license = "MIT"
+
+[features]
+default = ["gui"]
+gui = ["gtk4", "adw", "gdk4", "gio", "glib"]
+
+[dependencies]
+# GTK4 + Libadwaita 核心
+gtk4 = { version = "0.9", package = "gtk4", features = ["v4_14"], optional = true }
+adw = { version = "0.7", package = "libadwaita", features = ["v1_5"], optional = true }
+gdk4 = { version = "0.9", package = "gdk4", features = ["v4_14"], optional = true }
+gio = { version = "0.20", features = ["v2_80"], optional = true }
+glib = { version = "0.20", features = ["v2_80"], optional = true }
+
+# 压缩/解压 (always needed)
+flate2 = "1.0"
+
+# 序列化/配置 (always needed)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Pango (文本布局)
+pango = "0.20"
+
+# 系统路径 (always needed)
+dirs = "5.0"
+
+# Unicode 支持 (always needed)
+unicode-segmentation = "1.12"
+unicode-normalization = "0.1"
+
+# 工具 (always needed)
+once_cell = "1.19"
+log = "0.4"
+env_logger = "0.11"
+
+# 异步 (always needed)
+tokio = { version = "1.40", features = ["rt", "sync", "time", "macros"] }
+
+# HTML 转义 (always needed)
+html-escape = "0.2"
+
+# DBus (always needed)
+zbus = { version = "5.0", default-features = false, features = ["tokio"] }
+futures-util = "0.3"
+
+# 百度翻译 API (always needed)
+ureq = { version = "2", features = ["tls"] }
+md5 = "0.7"
+
+[profile.release]
+opt-level = 2
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 0
+debug = true

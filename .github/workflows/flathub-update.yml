@@ -1,0 +1,67 @@
+name: Update Flathub Manifest
+
+on:
+  push:
+    tags:
+      - 'v*' # 当推送以 v 开头的 tag 时触发
+
+jobs:
+  update-flathub:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Main Repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 获取完整的 git 历史，以便获取 tag 对应的 commit hash
+
+      - name: Get Tag Info
+        id: tag_info
+        run: |
+          # 获取最新的 tag 名称
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          # 获取该 tag 对应的 commit hash
+          COMMIT_HASH=$(git rev-parse HEAD)
+          
+          echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "commit=$COMMIT_HASH" >> $GITHUB_OUTPUT
+          echo "Detected Tag: $TAG_NAME, Commit: $COMMIT_HASH"
+
+      - name: Install flatpak-cargo-generator
+        run: |
+          pip install flatpak-cargo-generator
+
+      - name: Generate Cargo Sources
+        run: |
+          flatpak-cargo-generator Cargo.lock -o cargo-sources.json
+
+      - name: Clone Flathub Repo
+        uses: actions/checkout@v4
+        with:
+          repository: flathub/io.github.tigertall.QuickDict
+          path: flathub-repo
+          ssh-key: ${{ secrets.FLATHUB_SSH_KEY }}
+
+      - name: Update Flathub Manifest
+        run: |
+          cd flathub-repo
+          # 创建新分支
+          git checkout -b update-${{ steps.tag_info.outputs.tag }}
+          
+          # 使用 jq 更新 json 文件中的 tag 和 commit
+          jq --arg tag "${{ steps.tag_info.outputs.tag }}" \
+             --arg commit "${{ steps.tag_info.outputs.commit }}" \
+             '(.modules[] | select(.name == "quickdict") | .sources[] | select(objects and .type == "git")) |= {type: "git", url: .url, tag: $tag, commit: $commit}' \
+             io.github.tigertall.QuickDict.json > temp.json && mv temp.json io.github.tigertall.QuickDict.json
+          
+          # 覆盖更新 cargo-sources.json
+          cp ../cargo-sources.json .
+
+      - name: Commit and Push
+        uses: peter-evans/create-pull-request@v6
+        with:
+          path: flathub-repo
+          commit-message: "Update to ${{ steps.tag_info.outputs.tag }}"
+          title: "Update to ${{ steps.tag_info.outputs.tag }}"
+          body: "Automated update for tag ${{ steps.tag_info.outputs.tag }}"
+          branch: update-${{ steps.tag_info.outputs.tag }}
+          base: master

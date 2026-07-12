@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=QuickDict
+Comment=Look up words in dictionaries
+Exec=quickdict
+Icon=io.github.tigertall.QuickDict
+Terminal=false
+Type=Application
+Categories=GNOME;GTK;Office;Dictionary;
+StartupNotify=false
+DBusActivatable=false
+StartupWMClass=io.github.tigertall.QuickDict

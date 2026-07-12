@@ -1,0 +1,105 @@
+name: Flatpak Release
+
+on:
+  push:
+    tags:
+      - 'v*' # 仅在推送以 v 开头的标签时触发
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runs-on: ubuntu-latest
+          - arch: aarch64
+            runs-on: ubuntu-24.04-arm # 使用 GitHub 原生 ARM64 Runner
+
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Flatpak Builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+
+      - name: Setup Flatpak Environment
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y flathub \
+          org.freedesktop.Platform//25.08 \
+          org.freedesktop.Sdk//25.08 \
+          org.gnome.Platform//50 org.gnome.Sdk//50 \
+          org.freedesktop.Sdk.Extension.rust-stable//25.08
+
+      - name: Cache Flatpak Builder
+        uses: actions/cache@v4
+        with:
+          path: |
+            .flatpak-builder/cache
+            .flatpak-builder/downloads
+          key: flatpak-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('io.github.tigertall.QuickDict.json') }}-sdk-25.08
+          restore-keys: |
+            flatpak-${{ runner.os }}-${{ matrix.arch }}-
+
+      - name: Build Flatpak
+        run: |
+          flatpak-builder \
+            --user \
+            --force-clean \
+            --ccache \
+            --keep-build-dirs \
+            --default-branch=stable \
+            build-dir \
+            io.github.tigertall.QuickDict.json
+
+      - name: Export and Bundle
+        run: |
+          flatpak build-export repo build-dir stable
+          flatpak build-bundle repo quickdict-${{ matrix.arch }}.flatpak io.github.tigertall.QuickDict stable
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-${{ matrix.arch }}
+          path: quickdict-${{ matrix.arch }}.flatpak
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Meson
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: flatpak-*
+          merge-multiple: true
+
+      - name: Build GNOME Shell Extension zip (via Meson)
+        run: |
+          meson setup _extension_build ext/
+          meson compile -C _extension_build
+          cp _extension_build/quickdict-focus@tigertall.github.com.zip .
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # 不指定 name，默认就会使用触发的 tag 名称（如 v1.0.0）作为标题
+          files: |
+            quickdict-*.flatpak
+            quickdict-focus@tigertall.github.com.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

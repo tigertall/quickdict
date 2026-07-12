@@ -1,0 +1,21 @@
+flatpak
+sudo pip3 install flatpak-cargo-generator
+flatpak-cargo-generator Cargo.lock -o cargo-sources.json
+
+jq --slurpfile cargo cargo-sources.json \
+  '.modules[0].sources = [.modules[0].sources[0]] + $cargo[0]' \
+  io.github.tigertall.QuickDict.json > tmp.json && \
+mv tmp.json io.github.tigertall.QuickDict.json
+
+
+flatpak run org.flatpak.Builder --force-clean --install-deps-from=flathub --ccache --mirror-screenshots-url=https://dl.flathub.org/media/ --repo=repo flatapp io.github.tigertall.QuickDict.json
+
+
+flatpak run --command=flatpak-builder-lint org.flatpak.Builder --gha-format --exceptions --exceptions-repo stable manifest io.github.tigertall.QuickDict.json
+
+flatpak run --command=flatpak-builder-lint org.flatpak.Builder repo repo
+
+
+https://geekgo.tech/linux/%e5%a6%82%e4%bd%95%e5%9c%a8-flathub-%e5%8f%91%e5%b8%83%e8%87%aa%e5%b7%b1%e7%9a%84%e5%bc%80%e6%ba%90%e8%bd%af%e4%bb%b6/
+
+flatpak run org.flatpak.Builder --force-clean --sandbox --user --install --install-deps-from=flathub --ccache --mirror-screenshots-url=https://dl.flathub.org/media/ --repo=repo builddir io.github.glaumar.QRookie.yml 

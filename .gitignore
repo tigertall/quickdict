@@ -1,0 +1,14 @@
+/target/
+/build/
+repo/
+*.rpm
+**/*.rs.bk
+*.swp
+*.swo
+*~
+*.log
+.vscode/
+.idea/
+tools/mdx-analyzer/target/
+ext/quickdict-focus@tigertall.github.com/schemas/gschemas.compiled
+schemas/gschemas.compiled
