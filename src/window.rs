@@ -359,6 +359,25 @@ impl MainWindow {
             });
         }
 
+        // Set up internal link handler (entry://word → lookup)
+        {
+            let sb_entry = search_bar.entry.clone();
+            let cv_link = content_view.clone();
+            let manager = state.dict_manager.clone();
+            let cv = content_view.clone();
+            cv.set_link_handler(Rc::new(move |word| {
+                let word = crate::engine::search_engine::clean_word(&word);
+                if word.is_empty() { return; }
+                sb_entry.set_text(&word);
+                sb_entry.set_position(-1);
+                if let Ok(mgr) = manager.try_borrow() {
+                    let mut articles = mgr.lookup_local(&word);
+                    if let Some(a) = mgr.try_online(&word) { articles.push(a); }
+                    cv_link.show_multi_articles(articles);
+                }
+            }));
+        }
+
         Self {
             window,
             _content_view: content_view,

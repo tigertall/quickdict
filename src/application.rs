@@ -79,7 +79,9 @@ impl DictionaryApplication {
                         };
                         let items: Vec<serde_json::Value> = articles.iter().map(|a| {
                             let text = if a.is_html {
-                                crate::views::content_view::html_to_pango_markup(&a.raw_text)
+                                let markup = crate::views::content_view::html_to_pango_markup(&a.raw_text);
+                                // ClutterText in GNOME Shell doesn't support <a> tags — strip them
+                                strip_pango_a_tags(&markup)
                             } else {
                                 a.raw_text.clone()
                             };
@@ -258,4 +260,36 @@ impl DictionaryApplication {
     pub fn run(&self) {
         self.app.run();
     }
+}
+
+/// Strip <a> tags from Pango markup — ClutterText in GNOME Shell doesn't support them.
+/// Keeps the link text (e.g. "<a href='entry://ship'>ship</a>" → "ship").
+fn strip_pango_a_tags(markup: &str) -> String {
+    let mut result = String::with_capacity(markup.len());
+    let mut chars = markup.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '<' {
+            let mut lookahead = chars.clone();
+            let first = lookahead.next();
+            let tag_char = if first == Some('/') { lookahead.next() } else { first };
+            if tag_char == Some('a') || tag_char == Some('A') {
+                let next = lookahead.next();
+                let is_end = first == Some('/') && (next == Some('>') || next.is_none());
+                let is_start = first != Some('/') && (next == Some(' ') || next == Some('>') || next == Some('\''));
+                if is_end || is_start {
+                    chars = lookahead;
+                    // Only skip to '>' for start tags (<a href='...'>); </a> is already consumed
+                    if is_start {
+                        while let Some(&ch) = chars.peek() {
+                            chars.next();
+                            if ch == '>' { break; }
+                        }
+                    }
+                    continue;
+                }
+            }
+        }
+        result.push(c);
+    }
+    result
 }

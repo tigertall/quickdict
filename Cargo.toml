@@ -1,6 +1,6 @@
 [package]
 name = "quickdict"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.78"
 description = "A modern dictionary application with StarDict and DICT protocol support"
@@ -20,6 +20,8 @@ glib = { version = "0.20", features = ["v2_80"], optional = true }
 
 # 压缩/解压 (always needed)
 flate2 = "1.0"
+minilzo-rs = "0.6"
+ripemd = "0.1"
 
 # 序列化/配置 (always needed)
 serde = { version = "1.0", features = ["derive"] }

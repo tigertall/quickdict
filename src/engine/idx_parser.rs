@@ -178,8 +178,8 @@ mod tests {
         let entries = load_index(&data, 32);
         let sorted = build_sorted_index(&entries);
 
-        assert_eq!(binary_search(&entries, &sorted, "banana"), Some(1));
-        assert_eq!(binary_search(&entries, &sorted, "zebra"), None);
+        assert_eq!(binary_search_all(&entries, &sorted, "banana"), vec![1usize]);
+        assert_eq!(binary_search_all(&entries, &sorted, "zebra"), Vec::<usize>::new());
     }
 
     #[test]

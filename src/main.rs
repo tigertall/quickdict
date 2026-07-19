@@ -61,6 +61,7 @@ fn run_cli(args: &[String]) {
         "lookup" => cmd_lookup(args),
         "info" => cmd_info(args),
         "scan" => cmd_scan(args),
+        "mdx" => cmd_mdx(args),
         _ => eprintln!("Unknown command: {}", args[1]),
     }
 }
@@ -152,4 +153,29 @@ fn parse_dict_arg(args: &[String]) -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn cmd_mdx(args: &[String]) {
+    let path = args.get(2).map(PathBuf::from).expect("Missing MDX path");
+    let word = args.get(3).expect("Missing word to query");
+    println!("Opening: {}", path.display());
+    match engine::mdx_reader::MdxReader::open(&path) {
+        Ok(reader) => {
+            println!("Name: {}", reader.name());
+            println!("Word count: {}", reader.word_count());
+            let sample = reader.sample_words(5);
+            println!("Sample: {:?}", sample);
+            reader.build_index();
+            println!("Index: {} entries", reader.index_size());
+            println!("Looking up: {}", word);
+            match reader.lookup_exact(word) {
+                Some(a) => {
+                    println!("=== {} ===", a.dict_name);
+                    println!("{}", &a.raw_text[..a.raw_text.len().min(200)]);
+                }
+                None => println!("Not found"),
+            }
+        }
+        Err(e) => eprintln!("Error: {}", e),
+    }
 }

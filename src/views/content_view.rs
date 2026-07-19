@@ -11,8 +11,11 @@ struct ArticleExpander {
     container: gtk4::Box,
 }
 
+/// Type alias for link click handler
+pub type LinkHandler = Rc<dyn Fn(String)>;
+
 impl ArticleExpander {
-    fn new(article: &ArticleData) -> Self {
+    fn new(article: &ArticleData, link_handler: Option<&LinkHandler>) -> Self {
         // 词典名称标签（自定义样式）
         let safe_name = sanitize_null_bytes(&article.dict_name);
         let title_label = gtk4::Label::new(Some(&safe_name));
@@ -32,11 +35,24 @@ impl ArticleExpander {
         let label = gtk4::Label::new(None);
         label.set_wrap(true);
         label.set_xalign(0.0);
-        label.set_selectable(true);
         label.set_margin_start(20);
         label.set_margin_end(12);
         label.set_margin_top(6);
         label.set_margin_bottom(8);
+        // set_selectable(false): required for single-click link activation
+        // (selectable labels intercept first click for text selection)
+
+        // Connect link activation if handler provided
+        if let Some(handler) = link_handler {
+            let h = handler.clone();
+            label.connect_activate_link(move |_, url| {
+                if let Some(word) = url.strip_prefix("entry://") {
+                    h(word.to_string());
+                    return glib::Propagation::Stop;
+                }
+                glib::Propagation::Proceed
+            });
+        }
 
         if article.is_html {
             label.set_use_markup(true);
@@ -75,6 +91,7 @@ pub struct ContentView {
     articles_box: gtk4::Box,
 
     expanders: Rc<RefCell<Vec<ArticleExpander>>>,
+    link_handler: RefCell<Option<LinkHandler>>,
 }
 
 impl ContentView {
@@ -132,7 +149,12 @@ impl ContentView {
             updating: std::cell::Cell::new(false),
             articles_box,
             expanders: Rc::new(RefCell::new(Vec::new())),
+            link_handler: RefCell::new(None),
         }
+    }
+
+    pub fn set_link_handler(&self, handler: LinkHandler) {
+        *self.link_handler.borrow_mut() = Some(handler);
     }
 
     pub fn widget(&self) -> &gtk4::Stack {
@@ -166,8 +188,9 @@ impl ContentView {
         }
         self.expanders.borrow_mut().clear();
 
+        let handler = self.link_handler.borrow();
         for article in &articles {
-            let expander = ArticleExpander::new(article);
+            let expander = ArticleExpander::new(article, handler.as_ref());
             self.articles_box.append(expander.widget());
             self.expanders.borrow_mut().push(expander);
         }
@@ -215,6 +238,8 @@ pub(crate) fn html_to_pango_markup(html: &str) -> String {
                     Some(ch) if ch.is_whitespace() => {
                         if !tag_name.is_empty() {
                             in_attr = true;
+                            // Preserve whitespace for attribute separation
+                            attrs.push(ch);
                         }
                     }
                     Some(ch) if !in_attr => {
@@ -260,6 +285,18 @@ pub(crate) fn html_to_pango_markup(html: &str) -> String {
                 // 保留的格式标签（Pango 相同）
                 "b" | "strong" => {
                     if !closing {
+                        // If <b> directly follows text and starts with digit. (1., 2.),
+                        // ensure newline before it (Oxford: "noun<b>1.</b>" -> "noun\n<b>1.</b>")
+                        let mut peek = chars.clone();
+                        if let Some(d) = peek.next() {
+                            if d.is_ascii_digit() {
+                                if let Some(dot) = peek.next() {
+                                    if dot == '.' && !result.ends_with('\n') && !result.is_empty() {
+                                        result.push('\n');
+                                    }
+                                }
+                            }
+                        }
                         result.push_str("<b>");
                         tag_stack.push("b".into());
                     } else {
@@ -335,6 +372,7 @@ pub(crate) fn html_to_pango_markup(html: &str) -> String {
                     if !closing {
                         let color = extract_attr_value(&attrs, "color");
                         if let Some(c) = color {
+                            let c = normalize_pango_color(&c);
                             result.push_str(&format!("<span foreground='{}'>", escape_pango_attr(&c)));
                             tag_stack.push("span".into());
                         }
@@ -349,6 +387,7 @@ pub(crate) fn html_to_pango_markup(html: &str) -> String {
                         let style_color = extract_style_color(&attrs);
                         let c = color.or(style_color);
                         if let Some(c) = c {
+                            let c = normalize_pango_color(&c);
                             result.push_str(&format!("<span foreground='{}'>", escape_pango_attr(&c)));
                             tag_stack.push("span".into());
                         }
@@ -383,6 +422,13 @@ pub(crate) fn html_to_pango_markup(html: &str) -> String {
                 if ec == ' ' || ec == '<' || ec == '>' {
                     break;
                 }
+                // HTML entity names only contain [a-zA-Z0-9]; # only as first char
+                if !ec.is_ascii_alphanumeric() && ec != '#' {
+                    break;
+                }
+                if ec == '#' && !entity.is_empty() {
+                    break;
+                }
                 entity.push(chars.next().unwrap());
             }
             if had_semicolon {
@@ -392,7 +438,7 @@ pub(crate) fn html_to_pango_markup(html: &str) -> String {
                     "gt" => result.push_str("&gt;"),
                     "quot" => result.push_str("&quot;"),
                     "apos" => result.push_str("&#39;"),
-                    "nbsp" => result.push(' '),
+                    "nbsp" => result.push('\u{00A0}'),  // Unicode NBSP — Pango collapses regular spaces
                     _ if entity.starts_with('#') && entity.len() > 1 => {
                         let num_str = if entity.as_bytes()[1] == b'x' {
                             &entity[2..]
@@ -412,8 +458,14 @@ pub(crate) fn html_to_pango_markup(html: &str) -> String {
                     }
                 }
             } else {
-                result.push_str("&amp;");
-                result.push_str(&entity);
+                // Entity without semicolon — handle known ones
+                match entity.as_str() {
+                    "nbsp" => result.push('\u{00A0}'),
+                    _ => {
+                        result.push_str("&amp;");
+                        result.push_str(&entity);
+                    }
+                }
             }
         } else {
             // 纯文本：转义 Pango 特殊字符
@@ -427,6 +479,7 @@ pub(crate) fn html_to_pango_markup(html: &str) -> String {
                 '<' => result.push_str("&lt;"),
                 '>' => result.push_str("&gt;"),
                 '&' => result.push_str("&amp;"),
+                '\r' => {},  // Strip CR — ClutterText may fail on \r
                 _ => result.push(c),
             }
         }
@@ -456,6 +509,10 @@ pub(crate) fn html_to_pango_markup(html: &str) -> String {
     // 去除尾部多余换行
     while cleaned.ends_with('\n') {
         cleaned.pop();
+    }
+    // 去除首部换行（ClutterText 首行全空时可能不计算高度）
+    while cleaned.starts_with('\n') {
+        cleaned.remove(0);
     }
     cleaned
 }
@@ -512,25 +569,77 @@ fn extract_attr_value(attrs: &str, name: &str) -> Option<String> {
 
 fn extract_style_color(attrs: &str) -> Option<String> {
     let attrs_lower = attrs.to_lowercase();
-    if let Some(pos) = attrs_lower.find("color:") {
-        let after = &attrs[pos + 6..].trim_start();
-        let end = after.find(|c: char| c == ';' || c == '"' || c == '\'').unwrap_or(after.len());
-        return Some(after[..end].trim().to_string());
+    // Find standalone "color:" that is NOT part of "background-color:" etc.
+    let mut search_start = 0;
+    while let Some(pos) = attrs_lower[search_start..].find("color:") {
+        let abs_pos = search_start + pos;
+        if abs_pos == 0 || {
+            let prev = attrs_lower.as_bytes()[abs_pos - 1];
+            !prev.is_ascii_alphanumeric() && prev != b'-'
+        } {
+            let after = &attrs[abs_pos + 6..].trim_start();
+            let end = after.find(|c: char| c == ';' || c == '"' || c == '\'').unwrap_or(after.len());
+            return Some(after[..end].trim().to_string());
+        }
+        search_start = abs_pos + 1;
     }
-    if let Some(pos) = attrs_lower.find("color=") {
-        let after = &attrs[pos + 6..].trim_start();
-        let delim = after.chars().next()?;
-        if delim == '"' || delim == '\'' {
-            if let Some(end) = after[1..].find(delim) {
-                return Some(after[1..=end].to_string());
+    // Fallback: non-standard "color=" in style (also skip compound props)
+    search_start = 0;
+    while let Some(pos) = attrs_lower[search_start..].find("color=") {
+        let abs_pos = search_start + pos;
+        if abs_pos == 0 || {
+            let prev = attrs_lower.as_bytes()[abs_pos - 1];
+            !prev.is_ascii_alphanumeric() && prev != b'-'
+        } {
+            let after = &attrs[abs_pos + 6..].trim_start();
+            let delim = after.chars().next()?;
+            if delim == '"' || delim == '\'' {
+                if let Some(end) = after[1..].find(delim) {
+                    return Some(after[1..=end].to_string());
+                }
             }
         }
+        search_start = abs_pos + 1;
     }
     None
 }
 
 fn escape_pango_attr(s: &str) -> String {
     s.replace('&', "&amp;").replace('\'', "&#39;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// Normalize CSS color to Pango-compatible format.
+/// Pango rejects rgb() values with leading zeros (e.g. rgb(098,100,038));
+/// convert them to #RRGGBB hex which Pango reliably accepts.
+fn normalize_pango_color(color: &str) -> String {
+    let lower = color.trim().to_lowercase();
+    // rgb(r,g,b) → #RRGGBB
+    if let Some(rest) = lower.strip_prefix("rgb(").and_then(|s| s.strip_suffix(')')) {
+        let parts: Vec<&str> = rest.split(',').collect();
+        if parts.len() == 3 {
+            if let (Ok(r), Ok(g), Ok(b)) = (
+                parts[0].trim().parse::<u8>(),
+                parts[1].trim().parse::<u8>(),
+                parts[2].trim().parse::<u8>(),
+            ) {
+                return format!("#{:02X}{:02X}{:02X}", r, g, b);
+            }
+        }
+    }
+    // rgba(r,g,b,a) → #RRGGBB (discard alpha — Pango simple markup has no alpha)
+    if let Some(rest) = lower.strip_prefix("rgba(").and_then(|s| s.strip_suffix(')')) {
+        let parts: Vec<&str> = rest.split(',').collect();
+        if parts.len() >= 3 {
+            if let (Ok(r), Ok(g), Ok(b)) = (
+                parts[0].trim().parse::<u8>(),
+                parts[1].trim().parse::<u8>(),
+                parts[2].trim().parse::<u8>(),
+            ) {
+                return format!("#{:02X}{:02X}{:02X}", r, g, b);
+            }
+        }
+    }
+    color.to_string()
 }
 
 /// Remove interior null bytes that would crash GLib/Pango

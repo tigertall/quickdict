@@ -20,10 +20,11 @@ pub struct MdxReader {
     name: String,
     word_count: usize,
     /// word → (record_block_index, byte_offset_in_decompressed_block)
-    index: Mutex<Option<HashMap<String, (usize, u32)>>>,
+    index: Mutex<Option<HashMap<String, (usize, u32, u32)>>>,
     record_blocks: Vec<RecBlock>,
     file: Mutex<File>,
     all_entries: Vec<(String, u64)>,  // for lazy index building
+    rec_decomp_sizes: Vec<u64>,
 }
 
 impl MdxReader {
@@ -54,14 +55,10 @@ impl MdxReader {
         }
 
         let encrypted = xml_attr(&hdr_text, "Encrypted").unwrap_or_default();
-        if encrypted == "Yes" || encrypted == "1" {
-            if encrypted != "2" {
-                return Err("Encrypted MDX not supported".into());
-            }
-        }
+        let enc_flag: u32 = encrypted.parse().unwrap_or(0);
 
         let name = xml_attr(&hdr_text, "Title")
-            .or_else(|| xml_attr(&hdr_text, "Description").map(|d| strip_html_tags(&d)))
+            .filter(|t| t != "Title (No HTML code allowed)")
             .unwrap_or_else(|| {
                 path.file_stem()
                     .and_then(|s| s.to_str())
@@ -70,26 +67,56 @@ impl MdxReader {
             });
 
         // ========== 2. Block Header (v2) ==========
+        let block_hdr_start = file.seek(SeekFrom::Current(0))
+            .map_err(|e| format!("Seek: {}", e))?;
         let mut block_hdr = [0u8; 40];
         file.read_exact(&mut block_hdr).map_err(|e| format!("Read block hdr: {}", e))?;
         let mut pos = 0usize;
         let _num_key_blocks = read_u64_be(&block_hdr, &mut pos);
         let _num_entries = read_u64_be(&block_hdr, &mut pos);
-        let _key_info_decomp = read_u64_be(&block_hdr, &mut pos);
+        let _key_info_decomp = read_u64_be(&block_hdr, &mut pos) as usize;
         let key_info_comp = read_u64_be(&block_hdr, &mut pos) as usize;
         let _key_block_total = read_u64_be(&block_hdr, &mut pos);
         file.read_exact(&mut [0u8; 4]).map_err(|e| format!("Read block adler: {}", e))?;
 
-        // ========== 3. Key Block Info (variable-length entries) ==========
-        let mut ki = vec![0u8; key_info_comp];
-        file.read_exact(&mut ki).map_err(|e| format!("Read key info: {}", e))?;
-
-        if ki.len() < 8 || &ki[0..4] != b"\x02\x00\x00\x00" {
-            return Err("Bad key info header".into());
+        // ========== 3. Key Block Info ==========
+        // Try standard format first; if ki validates but decompress fails, retry variant
+        let mut ki_data = None;
+        let mut ki = vec![0u8; key_info_comp.min(100_000_000)];
+        if key_info_comp > 0 && key_info_comp < 100_000_000
+            && file.read_exact(&mut ki).is_ok()
+            && ki.len() >= 8
+        {
+            if enc_flag & 2 != 0 { decrypt_headword_index(&mut ki); }
+            ki_data = decompress_packed_block(&ki[..], _key_info_decomp);
         }
-        let ki_data = zlib_decompress(&ki[8..])?;
 
-        // Parse: num_entries(u64) + fwl(u16) + first_word + \0
+        if ki_data.is_none() {
+            // Retry with variant block header (32-byte)
+            file.seek(SeekFrom::Start(block_hdr_start))
+                .map_err(|e| format!("Seek retry: {}", e))?;
+            file.read_exact(&mut block_hdr).map_err(|e| format!("Read block hdr retry: {}", e))?;
+            let mut pos = 0usize;
+            let _ = read_u32_be(&block_hdr, &mut pos);
+            let _ = read_u32_be(&block_hdr, &mut pos);
+            let _ = read_u64_be(&block_hdr, &mut pos);
+            let key_info_comp = read_u64_be(&block_hdr, &mut pos) as usize;
+            file.seek(SeekFrom::Start(block_hdr_start + 32))
+                .map_err(|e| format!("Seek retry2: {}", e))?;
+            file.read_exact(&mut [0u8; 4]).map_err(|e| format!("Read block adler retry: {}", e))?;
+            ki = vec![0u8; key_info_comp];
+            file.read_exact(&mut ki).map_err(|e| format!("Read key info retry: {}", e))?;
+            // Variant might have 8-byte prefix before ki header
+            if &ki[0..4] == b"\x02\x00\x00\x00" {
+                ki_data = decompress_packed_block(&ki, _key_info_decomp);
+            } else if ki.len() >= 16 && &ki[8..12] == b"\x02\x00\x00\x00" {
+                // 8-byte prefix before the block
+                ki_data = decompress_packed_block(&ki[8..], _key_info_decomp);
+            } else {
+                return Err("Bad key info header".into());
+            }
+        }
+        let ki_data = ki_data.ok_or_else(|| "Key info decompress failed".to_string())?;
         //        + lwl(u16) + last_word + \0 + comp_size(u64) + decomp_size(u64)
         let mut key_blocks_info: Vec<(usize, usize)> = Vec::new();
         let mut kp = 0usize;
@@ -110,24 +137,13 @@ impl MdxReader {
         // ========== 4. Key Blocks: offset(u64) + word\0 ==========
         let mut all_entries: Vec<(String, u64)> = Vec::new();
 
-        for (cs, _ds) in &key_blocks_info {
+        for (cs, ds) in &key_blocks_info {
             if *cs > 100_000_000 { continue; }
             let mut kd = vec![0u8; *cs];
             file.read_exact(&mut kd).map_err(|e| format!("Read key block: {}", e))?;
 
-            // Key blocks: \x02\x00\x00\x00 + adler32(4) + zlib(data)
-            let decompressed = if kd.len() >= 8 && &kd[0..4] == b"\x02\x00\x00\x00" {
-                zlib_decompress(&kd[8..]).ok()
-            } else {
-                None
-            };
-            let decompressed = decompressed.or_else(|| {
-                if kd.len() >= 8 && &kd[0..4] == b"\x02\x00\x00\x00" {
-                    raw_deflate_decompress(&kd[8..]).ok()
-                } else {
-                    raw_deflate_decompress(&kd).ok()
-                }
-            });
+            // Use type-based decompressor for key blocks
+            let decompressed = decompress_packed_block(&kd, *ds);
 
             if let Some(data) = decompressed {
                 let mut dp = 0usize;
@@ -170,12 +186,14 @@ impl MdxReader {
         file.read_exact(&mut rec_idx).map_err(|e| format!("Read rec idx: {}", e))?;
 
         let mut gaps = vec![block0_gap];
+        let mut rec_decomp_sizes: Vec<u64> = Vec::with_capacity(num_rec_blocks);
         for i in 0..num_rec_blocks {
             let entry_start = i * 16;
             if entry_start + 16 > rec_idx.len() { break; }
             let mut ep = entry_start;
-            let _ds = read_u64_be(&rec_idx, &mut ep);
+            let decomp_size = read_u64_be(&rec_idx, &mut ep);
             let next_gap = read_u64_be(&rec_idx, &mut ep);
+            rec_decomp_sizes.push(decomp_size);
             gaps.push(next_gap);
         }
 
@@ -186,7 +204,7 @@ impl MdxReader {
 
         for i in 0..num_rec_blocks {
             let gap = gaps[i] as usize;
-            let comp_size = if gap >= 8 { gap - 8 } else { gap };
+            let comp_size = gap;
             rec_blocks.push(RecBlock {
                 file_offset: current_offset,
                 comp_size,
@@ -204,40 +222,54 @@ impl MdxReader {
             record_blocks: rec_blocks,
             file: Mutex::new(file),
             all_entries,
+            rec_decomp_sizes,
         })
     }
 
-    /// Build word→(block, offset) index (call from background thread)
+    /// Build word→(block, offset, end_offset) index (call from background thread)
     pub fn build_index(&self) {
-        let mut index: HashMap<String, (usize, u32)> = HashMap::new();
-        let mut article_idx: u64 = 0;
-        let mut file = self.file.lock().unwrap();
-
-        for (bi, rb) in self.record_blocks.iter().enumerate() {
-            if rb.comp_size == 0 { continue; }
-
-            file.seek(SeekFrom::Start(rb.file_offset)).ok();
-            let mut comp = vec![0u8; rb.comp_size];
-            file.read_exact(&mut comp).ok();
-
-            let decompressed = {
-                let mut d = ZlibDecoder::new(&comp[..]);
-                let mut r = Vec::new();
-                d.read_to_end(&mut r).ok().map(|_| r)
-            };
-
-            if let Some(data) = decompressed {
-                let bounds = find_article_boundaries(&data);
-                for (start, _end) in &bounds {
-                    if let Some((ref word, _)) = self.all_entries.get(article_idx as usize) {
-                        index.entry(word.clone()).or_insert((bi, *start));
-                    }
-                    article_idx += 1;
-                }
+        let mut index: HashMap<String, (usize, u32, u32)> = HashMap::new();
+        let cum_shadow: Vec<u64> = {
+            let mut v = Vec::with_capacity(self.rec_decomp_sizes.len() + 1);
+            v.push(0);
+            let mut acc: u64 = 0;
+            for &ds in &self.rec_decomp_sizes {
+                acc = acc.saturating_add(ds);
+                v.push(acc);
             }
+            v
+        };
+        let total_decomp: u64 = cum_shadow.last().copied().unwrap_or(0);
+        for (entry_idx, (word, offset)) in self.all_entries.iter().enumerate() {
+            let bi = match cum_shadow.binary_search(offset) {
+                Ok(i) => i,
+                Err(0) => continue,
+                Err(i) => i - 1,
+            };
+            if bi >= self.record_blocks.len() { continue; }
+            let offset_in_block = (*offset - cum_shadow[bi]) as u32;
+            let end_offset = if entry_idx + 1 < self.all_entries.len() {
+                let next_off = self.all_entries[entry_idx + 1].1;
+                if next_off <= *offset {
+                    (cum_shadow[bi + 1].min(cum_shadow[bi] + self.rec_decomp_sizes[bi]) - cum_shadow[bi]) as u32
+                } else {
+                    (next_off - cum_shadow[bi]) as u32
+                }
+            } else {
+                (total_decomp - cum_shadow[bi]) as u32
+            };
+            index.entry(word.clone()).or_insert((bi, offset_in_block, end_offset));
         }
         log::info!("MDX: indexed {} / {} words", index.len(), self.all_entries.len());
         *self.index.lock().unwrap() = Some(index);
+    }
+
+    pub fn index_size(&self) -> usize {
+        self.index.lock().unwrap().as_ref().map(|m| m.len()).unwrap_or(0)
+    }
+
+    pub fn sample_words(&self, n: usize) -> Vec<&str> {
+        self.all_entries.iter().take(n).map(|(w, _)| w.as_str()).collect()
     }
 
     pub fn name(&self) -> &str { &self.name }
@@ -257,9 +289,9 @@ impl MdxReader {
         // Linear case-insensitive fallback
         if let Some(idx) = self.index.lock().ok() {
             if let Some(ref map) = *idx {
-                for (key, &(bi, off)) in map {
+                for (key, &(bi, off, end_off)) in map.iter() {
                     if key.to_lowercase() == wl {
-                        return self.read_article(bi, off);
+                        return self.read_article(bi, off, end_off);
                     }
                 }
             }
@@ -281,18 +313,18 @@ impl MdxReader {
     fn lookup_inner(&self, word: &str) -> Option<ArticleData> {
         let idx = self.index.lock().ok()?;
         let map = idx.as_ref()?;
-        let &(bi, off) = map.get(word)?;
-        self.read_article(bi, off)
+        let &(bi, off, end_off) = map.get(word)?;
+        self.read_article(bi, off, end_off)
     }
 
-    fn read_article(&self, block_index: usize, offset: u32) -> Option<ArticleData> {
+    fn read_article(&self, block_index: usize, offset: u32, end_offset: u32) -> Option<ArticleData> {
         let rb = self.record_blocks.get(block_index)?;
 
         // Try cache
         {
             let cache = rb.cached.lock().ok()?;
             if let Some(ref data) = *cache {
-                return extract_article(data, offset, &self.name);
+                return extract_article(data, offset, end_offset, &self.name);
             }
         }
 
@@ -303,11 +335,12 @@ impl MdxReader {
         file.read_exact(&mut comp).ok()?;
         drop(file);
 
-        let data = zlib_decompress(&comp)
-            .or_else(|_| raw_deflate_decompress(&comp))
-            .ok()?;
+        let decomp_size = self.rec_decomp_sizes.get(block_index).copied().unwrap_or(0) as usize;
+        let data = decompress_packed_block(&comp, decomp_size)
+            .or_else(|| zlib_decompress(&comp).ok())
+            .or_else(|| raw_deflate_decompress(&comp).ok())?;
 
-        let result = extract_article(&data, offset, &self.name);
+        let result = extract_article(&data, offset, end_offset, &self.name);
 
         if let Ok(mut cache) = rb.cached.lock() {
             *cache = Some(data);
@@ -317,61 +350,16 @@ impl MdxReader {
     }
 }
 
-/// Find article boundaries in decompressed HTML.
-/// Each article starts with: <link rel="stylesheet" ... sf_ecce.css"/>
-fn find_article_boundaries(data: &[u8]) -> Vec<(u32, u32)> {
-    let mut boundaries = Vec::new();
-    if data.is_empty() { return boundaries; }
-
-    let link_prefix = b"<link ";
-    let css_suffix = b"sf_ecce.css";
-
-    let mut i = 0;
-    while i + 6 < data.len() {
-        if &data[i..i+6] == link_prefix {
-            let end = data[i..].iter().position(|&b| b == b'>').map(|p| i + p).unwrap_or(data.len());
-            if data[i..end].windows(css_suffix.len()).any(|w| w == css_suffix) {
-                if let Some(last) = boundaries.last_mut() {
-                    last.1 = i as u32;
-                }
-                boundaries.push((i as u32, data.len() as u32));
-            }
-        }
-        i += 1;
-    }
-
-    boundaries
-}
-
-/// Extract article text from decompressed block at given offset
-fn extract_article(data: &[u8], offset: u32, dict_name: &str) -> Option<ArticleData> {
+/// Extract article text from decompressed block at given offset range
+fn extract_article(data: &[u8], offset: u32, end_offset: u32, dict_name: &str) -> Option<ArticleData> {
     let start = offset as usize;
-    if start >= data.len() { return None; }
-
-    // Find end: next <link ... sf_ecce.css or end of data
-    let mut end = data.len();
-    let link_prefix = b"<link ";
-    let css_suffix = b"sf_ecce.css";
-
-    let mut i = start + 1;
-    while i + 6 < data.len() {
-        if &data[i..i+6] == link_prefix {
-            let link_end = data[i..].iter().position(|&b| b == b'>').map(|p| i + p).unwrap_or(data.len());
-            if data[i..link_end].windows(css_suffix.len()).any(|w| w == css_suffix) {
-                end = i;
-                break;
-            }
-        }
-        i += 1;
-    }
-
+    let end = (end_offset as usize).min(data.len());
+    if start >= data.len() || end <= start { return None; }
     let raw = &data[start..end];
-    // Strip interior null bytes which would crash Pango/GLib,
-    // then decode as UTF-8 (preserving multi-byte sequences)
-    let filtered: Vec<u8> = raw.iter().filter(|&&b| b != 0).copied().collect();
+    // Strip null bytes (crash Pango/GLib) and \r (breaks ClutterText markup)
+    let filtered: Vec<u8> = raw.iter().filter(|&&b| b != 0 && b != b'\r').copied().collect();
     let text = String::from_utf8_lossy(&filtered).to_string();
     let is_html = !text.is_empty();
-
     Some(ArticleData {
         dict_name: format!("{} (MDX)", dict_name),
         raw_text: text,
@@ -382,8 +370,14 @@ fn extract_article(data: &[u8], offset: u32, dict_name: &str) -> Option<ArticleD
 // ========== Helper functions ==========
 
 fn read_u64_be(data: &[u8], pos: &mut usize) -> u64 {
-    let v = u64::from_be_bytes(data[*pos..*pos + 8].try_into().unwrap());
+    let v = u64::from_be_bytes(data[*pos..*pos+8].try_into().unwrap());
     *pos += 8;
+    v
+}
+
+fn read_u32_be(data: &[u8], pos: &mut usize) -> u32 {
+    let v = u32::from_be_bytes(data[*pos..*pos+4].try_into().unwrap());
+    *pos += 4;
     v
 }
 
@@ -391,6 +385,21 @@ fn read_u16_be(data: &[u8], pos: &mut usize) -> u16 {
     let v = u16::from_be_bytes(data[*pos..*pos + 2].try_into().unwrap());
     *pos += 2;
     v
+}
+
+/// Goldendict-ng compatible block decompressor
+fn decompress_packed_block(data: &[u8], decomp_size: usize) -> Option<Vec<u8>> {
+    if data.len() < 8 { return None; }
+    let ctype = u32::from_be_bytes(data[0..4].try_into().ok()?);
+    let _checksum = u32::from_be_bytes(data[4..8].try_into().ok()?);
+    let buf = &data[8..];
+    match ctype {
+        0x00000000 => Some(buf.to_vec()),
+        0x01000000 => lzo_decompress(buf, decomp_size).ok(),
+        0x02000000 => zlib_decompress(buf).ok()
+            .or_else(|| raw_deflate_decompress(buf).ok()),
+        _ => None,
+    }
 }
 
 fn zlib_decompress(data: &[u8]) -> Result<Vec<u8>, String> {
@@ -406,6 +415,30 @@ fn raw_deflate_decompress(data: &[u8]) -> Result<Vec<u8>, String> {
     let mut r = Vec::new();
     d.read_to_end(&mut r).map_err(|e| format!("deflate: {}", e))?;
     Ok(r)
+}
+
+fn lzo_decompress(data: &[u8], decomp_size: usize) -> Result<Vec<u8>, String> {
+    let lzo = minilzo_rs::LZO::init().map_err(|_| "lzo: init failed")?;
+    lzo.decompress_safe(data, decomp_size.max(data.len() * 4).min(100_000_000))
+        .map_err(|_| "lzo: decompress failed".into())
+}
+
+fn decrypt_headword_index(data: &mut [u8]) {
+    use ripemd::Ripemd128;
+    use ripemd::Digest;
+    if data.len() < 8 { return; }
+    let mut hasher = Ripemd128::new();
+    hasher.update(&data[4..8]);
+    hasher.update(&[0x95, 0x36, 0x00, 0x00]);
+    let key = hasher.finalize();
+    let mut prev: u8 = 0x36;
+    for i in 0..(data.len() - 8) {
+        let byte = data[8 + i];
+        let mut b = (byte >> 4) | (byte << 4);
+        b ^= prev ^ (i as u8) ^ key[i % 16];
+        prev = byte;
+        data[8 + i] = b;
+    }
 }
 
 fn utf16le_to_string(data: &[u8]) -> String {
@@ -428,31 +461,20 @@ fn xml_attr(xml: &str, name: &str) -> Option<String> {
     None
 }
 
-/// Strip HTML tags and decode entities from an HTML string
-fn strip_html_tags(html: &str) -> String {
-    let mut result = String::new();
-    let mut in_tag = false;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
 
-    for c in html.chars() {
-        if c == '<' {
-            in_tag = true;
-        } else if c == '>' {
-            in_tag = false;
-        } else if !in_tag {
-            result.push(c);
-        }
+    #[test]
+    fn test_oxford_lookup_good() {
+        let _ = env_logger::try_init();
+        let path = Path::new("/home/tiger/Documents/test-dict/[英-汉] 【2012.7.1】牛津高阶学习词典英汉双解第7版【OALD 8风格重新排版】.mdx");
+        if !path.exists() { eprintln!("SKIP: file not found"); return; }
+        let reader = MdxReader::open(path).expect("open");
+        assert!(reader.word_count() > 0);
+        reader.build_index();
+        assert!(reader.index_size() > 0);
+        assert!(reader.lookup_exact("good").is_some());
     }
-
-    // Decode common HTML entities
-    result = result
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&#39;", "'")
-        .replace("&nbsp;", " ");
-
-    // Collapse whitespace
-    result.split_whitespace().collect::<Vec<_>>().join(" ")
 }
