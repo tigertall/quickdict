@@ -166,6 +166,11 @@ impl DictManager {
     // ========== 在线 ==========
 
     pub fn add_online_dict(&mut self, dict: Arc<dyn Dictionary>) {
+        if let Some(id) = dict.kind().online_id() {
+            if self.online_idx(id).is_some() {
+                return; // Already registered
+            }
+        }
         self.dicts.push(dict);
         self.active.push(true);
         self.mdict_paths_index.push(None);
@@ -209,6 +214,29 @@ impl DictManager {
 
 
     // ========== 扫描 ==========
+
+    /// 移除不在扫描缓存中的词典（保留在线词典）
+    pub fn remove_stale_dicts(&mut self, scanned: &[(String, String, String)]) {
+        let scanned_names: std::collections::HashSet<&str> =
+            scanned.iter().map(|(_, name, _)| name.as_str()).collect();
+        let mut i = 0;
+        while i < self.dicts.len() {
+            let d = &self.dicts[i];
+            if !d.kind().is_online() && !scanned_names.contains(d.name()) {
+                self.dicts.remove(i);
+                self.active.remove(i);
+                self.mdict_paths_index.remove(i);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    /// 同步词典列表与扫描缓存：移除过时词典，添加新词典
+    pub fn sync_from_cache(&mut self, scanned: &[(String, String, String)]) -> usize {
+        self.remove_stale_dicts(scanned);
+        self.load_from_cache(scanned)
+    }
 
     /// 从缓存的扫描结果直接加载词典，不遍历文件系统
     pub fn load_from_cache(&mut self, scanned: &[(String, String, String)]) -> usize {

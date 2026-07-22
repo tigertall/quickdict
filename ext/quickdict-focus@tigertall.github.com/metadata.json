@@ -5,5 +5,5 @@
   "url": "https://github.com/tigertall/quickdict",
   "shell-version": ["45", "46", "47", "48", "49", "50"],
   "settings-schema": "org.gnome.shell.extensions.quickdict-focus",
-  "version-name": "0.1"
+  "version-name": "0.2.0"
 }

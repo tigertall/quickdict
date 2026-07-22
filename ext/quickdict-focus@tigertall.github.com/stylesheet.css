@@ -1,0 +1,38 @@
+.quickdict-popup {
+    border-radius: 14px;
+    padding: 12px;
+}
+
+/* Dark theme */
+.quickdict-popup-dark {
+    background: rgba(0, 0, 0, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.quickdict-dict-name-dark {
+    color: #62a0ea;
+    font-weight: bold;
+    margin-top: 4px;
+}
+
+.quickdict-text-dark {
+    color: #fff;
+    margin-bottom: 4px;
+}
+
+/* Light theme */
+.quickdict-popup-light {
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+.quickdict-dict-name-light {
+    color: #1a5fb4;
+    font-weight: bold;
+    margin-top: 4px;
+}
+
+.quickdict-text-light {
+    color: #1a1a1a;
+    margin-bottom: 4px;
+}

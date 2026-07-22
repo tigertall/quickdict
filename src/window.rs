@@ -103,6 +103,14 @@ impl MainWindow {
             });
         }
 
+        // 同步 collapsed 状态到按钮
+        {
+            let btn = sidebar_toggle.clone();
+            split_view.connect_collapsed_notify(move |sv| {
+                btn.set_active(!sv.is_collapsed());
+            });
+        }
+
         window.set_content(Some(&split_view));
 
         // 保存窗口大小
@@ -150,6 +158,45 @@ impl MainWindow {
                     })
                     .build(),
             ]);
+        }
+
+        // F9 快捷键：ShortcutController(Global) + CallbackAction
+        {
+            let shortcut_controller = gtk4::ShortcutController::new();
+            shortcut_controller.set_scope(gtk4::ShortcutScope::Global);
+            let trigger = gtk4::ShortcutTrigger::parse_string("F9").unwrap();
+            let sp = split_view.clone();
+            let se = search_bar.entry.clone();
+            let action = gtk4::CallbackAction::new(move |_, _| {
+                sp.set_collapsed(!sp.is_collapsed());
+                // 清除 collapsed 切换导致 search entry 重获焦点时的自动全选，光标置尾
+                se.set_position(-1);
+                glib::Propagation::Proceed
+            });
+            let shortcut = gtk4::Shortcut::builder()
+                .trigger(&trigger)
+                .action(&action)
+                .build();
+            shortcut_controller.add_shortcut(shortcut);
+            window.add_controller(shortcut_controller);
+        }
+
+        // Ctrl+L 快捷键：ShortcutController(Global) 确保搜索框不消费
+        {
+            let shortcut_controller = gtk4::ShortcutController::new();
+            shortcut_controller.set_scope(gtk4::ShortcutScope::Global);
+            let trigger = gtk4::ShortcutTrigger::parse_string("<Control>L").unwrap();
+            let entry = search_bar.entry.clone();
+            let action = gtk4::CallbackAction::new(move |_, _| {
+                entry.grab_focus();
+                glib::Propagation::Proceed
+            });
+            let shortcut = gtk4::Shortcut::builder()
+                .trigger(&trigger)
+                .action(&action)
+                .build();
+            shortcut_controller.add_shortcut(shortcut);
+            window.add_controller(shortcut_controller);
         }
 
         // === 连接信号 ===
@@ -377,6 +424,9 @@ impl MainWindow {
                 }
             }));
         }
+
+        // Focus search entry on startup
+        search_bar.entry.grab_focus();
 
         Self {
             window,

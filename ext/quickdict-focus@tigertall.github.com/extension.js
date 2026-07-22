@@ -19,20 +19,48 @@ let settings = null;
 let panelButton = null;
 let popup = null;
 let activeSignals = [];
-let leaveTimeoutId = 0; // 🎯 核心：用于存储 200ms 延时定时器的 ID
-const BUFFER_PX = 10; // 🎯 核心设置：外围 10px 范围都算安全缓冲区
+let leaveTimeoutId = 0;
+const BUFFER_PX = 10;
+
+function isSystemDark() {
+    try {
+        let interfaceSettings = new Gio.Settings({ schema_id: 'org.gnome.desktop.interface' });
+        let scheme = interfaceSettings.get_string('color-scheme');
+        return scheme === 'prefer-dark';
+    } catch (e) {
+        return false;
+    }
+}
+
+function resolveTheme() {
+    if (!settings) return 'dark';
+    let theme = settings.get_string('popup-theme');
+    if (theme === 'dark') return 'dark';
+    if (theme === 'light') return 'light';
+    // auto: follow system
+    return isSystemDark() ? 'dark' : 'light';
+}
+
+function applyPopupTheme(box) {
+    let theme = resolveTheme();
+    if (theme === 'light') {
+        box.style_class = 'quickdict-popup quickdict-popup-light';
+    } else {
+        box.style_class = 'quickdict-popup quickdict-popup-dark';
+    }
+}
 
 function ensurePopup() {
     if (!popup) {
         popup = new St.BoxLayout({
-            style: 'background: rgba(0,0,0,0.88); border: 1px solid rgba(255,255,255,0.25); border-radius: 14px; padding: 12px;',
-            vertical: true, 
-            reactive: true,   
-            track_hover: true, // 开启 hover 状态追踪
-            x: 0, y: 0, 
-            visible: false, 
+            vertical: true,
+            reactive: true,
+            track_hover: true,
+            x: 0, y: 0,
+            visible: false,
             width: 400
         });
+        applyPopupTheme(popup);
         Main.uiGroup.add_child(popup);
     }
     return popup;
@@ -76,8 +104,12 @@ function showResults(jsonStr) {
     const content = new St.BoxLayout({ vertical: true });
     
     for (const r of results) {
-        content.add_child(new St.Label({ text: r.name, style: 'color: #62a0ea; font-weight: bold; margin-top: 4px;' }));
-        const t = new St.Label({ style: 'color: #fff; margin-bottom: 4px;' });
+        let theme = resolveTheme();
+        let dnClass = (theme === 'light') ? 'quickdict-dict-name-light' : 'quickdict-dict-name-dark';
+        let txClass = (theme === 'light') ? 'quickdict-text-light' : 'quickdict-text-dark';
+        content.add_child(new St.Label({ text: r.name, style_class: dnClass }));
+        const t = new St.Label({ style_class: txClass });
+        t.clutter_text.use_markup = true;
         t.clutter_text.set_markup(r.text || '');
         t.clutter_text.single_line_mode = false; t.clutter_text.line_wrap = true;
         t.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR; t.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
@@ -202,6 +234,26 @@ export default class QuickDictFocusExtension extends Extension {
         panelButton.menu.addMenuItem(monitorItem);
         this._settingsId = settings.connect('changed::clipboard-monitor', () => { monitorItem.setToggleState(settings.get_boolean('clipboard-monitor')); updateIcon(); });
 
+        // Listen for popup theme changes and update popup style dynamically
+        this._themeId = settings.connect('changed::popup-theme', () => {
+            if (popup) {
+                applyPopupTheme(popup);
+            }
+        });
+
+        // 监听系统 color-scheme 变更，Auto 模式下实时更新弹窗主题
+        this._systemSettings = new Gio.Settings({ schema_id: 'org.gnome.desktop.interface' });
+        this._systemThemeId = this._systemSettings.connect('changed::color-scheme', () => {
+            if (settings && settings.get_string('popup-theme') === 'auto' && popup) {
+                applyPopupTheme(popup);
+            }
+        });
+
+        // Load extension CSS stylesheet
+        let theme = St.ThemeContext.get_for_stage(global.stage).get_theme();
+        let cssPath = this.dir.get_path() + '/stylesheet.css';
+        this._styleSheet = theme.load_stylesheet(Gio.File.new_for_path(cssPath));
+
         Main.panel.addToStatusArea('quickdict', panelButton);
 
         this._selId = global.display.get_selection().connect('owner-changed', (_sel, selType, _source) => {
@@ -248,11 +300,23 @@ export default class QuickDictFocusExtension extends Extension {
         if (this._errorId) { GLib.source_remove(this._errorId); this._errorId = 0; }
         if (settings) {
             if (this._settingsId) { settings.disconnect(this._settingsId); this._settingsId = null; }
+            if (this._themeId) { settings.disconnect(this._themeId); this._themeId = null; }
+            if (this._systemThemeId) {
+                this._systemSettings.disconnect(this._systemThemeId);
+                this._systemThemeId = null;
+                this._systemSettings = null;
+            }
             settings = null;
         }
         if (panelButton) { panelButton.destroy(); panelButton = null; }
         if (popup) { global.stage.remove_child(popup); popup.destroy(); popup = null; }
         if (debounce) { GLib.source_remove(debounce); debounce = 0; }
         if (this._selId) { global.display.get_selection().disconnect(this._selId); this._selId = null; }
+        if (this._styleSheet) {
+            try {
+                St.ThemeContext.get_for_stage(global.stage).get_theme().unload_stylesheet(this._styleSheet);
+            } catch (e) {}
+            this._styleSheet = null;
+        }
     }
 }

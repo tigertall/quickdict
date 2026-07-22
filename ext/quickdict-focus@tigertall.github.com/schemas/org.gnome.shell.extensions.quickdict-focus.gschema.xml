@@ -11,5 +11,10 @@
       <summary>App ID whitelist</summary>
       <description>Comma-separated list of App IDs to filter. Empty means allow all.</description>
     </key>
+    <key name="popup-theme" type="s">
+      <default>"auto"</default>
+      <summary>Popup color theme</summary>
+      <description>Popup color theme: 'auto' (follow system), 'dark', or 'light'.</description>
+    </key>
   </schema>
 </schemalist>

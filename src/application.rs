@@ -252,6 +252,10 @@ impl DictionaryApplication {
             move |app, _files, _hint| f(app)
         });
 
+        // 注册全局快捷键
+        app.set_accels_for_action("app.preferences", &["<Control>comma"]);
+        app.set_accels_for_action("win.search-focus", &["<Control>L"]);
+
         Self {
             app,
         }

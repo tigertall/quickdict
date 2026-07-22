@@ -39,8 +39,8 @@ impl ArticleExpander {
         label.set_margin_end(12);
         label.set_margin_top(6);
         label.set_margin_bottom(8);
-        // set_selectable(false): required for single-click link activation
-        // (selectable labels intercept first click for text selection)
+        label.set_selectable(true);
+        label.set_focusable(false);
 
         // Connect link activation if handler provided
         if let Some(handler) = link_handler {

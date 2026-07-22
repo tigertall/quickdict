@@ -10,7 +10,7 @@ custom_target('extension-zip',
   output: extension_id + '.zip',
   command: [
     'sh', '-c',
-    'cd "$0" && zip -r "$1" . -x "*~" "*.un~"',
+    'rm -f "$1" && cd "$0" && zip -r "$1" . -x "*~" "*.un~"',
     meson.project_source_root() / extension_id,
     meson.current_build_dir() / extension_id + '.zip'
   ],

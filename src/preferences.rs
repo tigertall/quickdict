@@ -253,7 +253,7 @@ impl PreferencesWindow {
                             config.set_scanned_dicts(&found);
                             if let Ok(mut mgr) = dm.try_borrow_mut() {
                                 mgr.add_online_dict(Arc::new(crate::engine::dict_manager::BaiduDict));
-                                mgr.load_from_cache(&found);
+                                mgr.sync_from_cache(&found);
                                 let dict_states = config.load_dict_active_states();
                                 if !dict_states.is_empty() { mgr.import_active_states(&dict_states); }
                                 config.save_dict_active_states(&mgr.export_active_states());
