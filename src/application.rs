@@ -86,13 +86,10 @@ impl DictionaryApplication {
                                     let markup = crate::views::content_view::html_to_pango_markup(
                                         &a.raw_text,
                                     );
-                                    eprintln!(
-                                        "\n=== [D-Bus: {}] ===\n--- RAW ({}B) ---\n{}\n--- PANGO ({}B) ---\n{}",
-                                        a.dict_name,
-                                        a.raw_text.len(),
-                                        a.raw_text,
-                                        markup.len(),
-                                        markup,
+                                    crate::views::content_view::log_raw_to_pango(
+                                        &a.dict_name,
+                                        &a.raw_text,
+                                        &markup,
                                     );
                                     // ClutterText in GNOME Shell doesn't support <a> tags — strip them
                                     strip_pango_a_tags(&markup)
@@ -183,6 +180,9 @@ impl DictionaryApplication {
         }
 
         // 统一处理 activate 和 open 信号，确保应用菜单与活动视图行为一致
+        // Initialize debug log flag from config
+        crate::views::content_view::set_debug_log_markup(config.debug_log_markup());
+
         let activate_fn: Rc<dyn Fn(&adw::Application)> = {
             let state = state.clone();
             let mw = main_window.clone();

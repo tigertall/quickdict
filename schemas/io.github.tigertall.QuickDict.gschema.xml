@@ -57,6 +57,12 @@
       <summary>Baidu API Key</summary>
       <description>API Key for Baidu LLM Text Translation API.</description>
     </key>
+    <!-- 调试：打印 HTML→Pango 转换的原始和格式化内容到 stderr -->
+    <key name="debug-log-markup" type="b">
+      <default>false</default>
+      <summary>Debug log markup conversion</summary>
+      <description>Print raw HTML and formatted Pango markup to stderr for each article lookup.</description>
+    </key>
     <!-- 词典活跃状态（所有类型） -->
     <key name="dict-active-states" type="as">
       <default>[]</default>

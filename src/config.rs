@@ -12,6 +12,7 @@ const KEY_BAIDU_APPID: &str = "baidu-appid";
 const KEY_BAIDU_APIKEY: &str = "baidu-apikey";
 const KEY_SCANNED_DICTS: &str = "scanned-dicts";
 const KEY_DICT_ACTIVE_STATES: &str = "dict-active-states";
+const KEY_DEBUG_LOG_MARKUP: &str = "debug-log-markup";
 
 /// GSettings 配置封装
 #[derive(Debug, Clone)]
@@ -177,6 +178,11 @@ impl Config {
 
     pub fn load_dict_order(&self) -> Vec<String> {
         self.settings.strv(KEY_DICT_ORDER).iter().map(|s| s.to_string()).collect()
+    }
+
+    /// 调试：是否将 raw/pango 内容打印到 stderr
+    pub fn debug_log_markup(&self) -> bool {
+        self.settings.boolean(KEY_DEBUG_LOG_MARKUP)
     }
 
     // === 便捷方法 ===

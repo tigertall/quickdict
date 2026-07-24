@@ -2,6 +2,7 @@ use gtk4::prelude::*;
 use std::cell::RefCell;
 use std::fmt::Write;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::word_list::WordList;
 use super::article_renderer::ArticleRenderer;
@@ -10,6 +11,14 @@ use crate::engine::types::ArticleData;
 /// 单个词典的释义折叠区域
 struct ArticleExpander {
     container: gtk4::Box,
+}
+
+static DEBUG_LOG_MARKUP: AtomicBool = AtomicBool::new(false);
+
+/// Set whether to log raw→Pango conversion output to stderr.
+/// Call once at startup from the application, reading GSettings.
+pub(crate) fn set_debug_log_markup(enabled: bool) {
+    DEBUG_LOG_MARKUP.store(enabled, Ordering::Relaxed);
 }
 
 /// Type alias for link click handler
@@ -63,7 +72,9 @@ impl ArticleExpander {
             label.set_markup(&markup);
         } else {
             let safe_text = sanitize_null_bytes(&article.raw_text);
-            eprintln!("\n=== [{}] ===\n--- PLAINTEXT ({}B) ---\n{}", article.dict_name, safe_text.len(), safe_text);
+            if DEBUG_LOG_MARKUP.load(Ordering::Relaxed) {
+                eprintln!("\n=== [{}] ===\n--- PLAINTEXT ({}B) ---\n{}", article.dict_name, safe_text.len(), safe_text);
+            }
             label.set_label(&safe_text);
         }
 
@@ -215,7 +226,10 @@ impl ContentView {
     }
 }
 
-fn log_raw_to_pango(dict: &str, raw: &str, pango: &str) {
+pub(crate) fn log_raw_to_pango(dict: &str, raw: &str, pango: &str) {
+    if !DEBUG_LOG_MARKUP.load(Ordering::Relaxed) {
+        return;
+    }
     eprintln!(
         "\n=== [{}] ===\n--- RAW ({}B) ---\n{}\n--- PANGO ({}B) ---\n{}",
         dict, raw.len(), raw, pango.len(), pango,
