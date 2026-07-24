@@ -1,6 +1,7 @@
 use std::collections::HashSet;
+
 use crate::engine::dict_manager::DictManager;
-use crate::engine::types::{SearchResult};
+use crate::engine::types::SearchResult;
 
 /// Strip leading/trailing punctuation from a query word
 pub(crate) fn clean_word(word: &str) -> String {
@@ -52,32 +53,44 @@ impl SearchEngine {
         if query.is_empty() || query.len() > 30 { return Vec::new(); }
         let mut results: Vec<SearchResult> = Vec::new();
 
-        for dict in manager.active_dictionaries() {
+        for dict in manager.enabled() {
             if let Some(article) = dict.lookup_exact(&query) {
                 results.push(SearchResult {
-                    dict_name: article.dict_name.clone(), word: query.to_string(),
-                    
-                    score: 1.0
+                    dict_name: article.dict_name.clone(),
+                    word: query.to_string(),
+                    score: 1.0,
                 });
             }
         }
-        if !results.is_empty() { return Self::dedup(results); }
+        if !results.is_empty() {
+            return Self::dedup(results);
+        }
 
         if query.len() >= self.config.prefix_min_len {
-            for dict in manager.active_dictionaries() {
+            for dict in manager.enabled() {
                 results.extend(dict.lookup_prefix(&query, self.config.prefix_limit));
             }
         }
         if !results.is_empty() {
-            results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            results.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             results.truncate(self.config.max_results);
             return Self::dedup(results);
         }
 
-        for dict in manager.active_dictionaries() {
-            results.extend(dict.lookup_fuzzy(&query, self.config.fuzzy_threshold, self.config.fuzzy_limit));
+        for dict in manager.enabled() {
+            results.extend(
+                dict.lookup_fuzzy(&query, self.config.fuzzy_threshold, self.config.fuzzy_limit),
+            );
         }
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(self.config.max_results);
         Self::dedup(results)
     }

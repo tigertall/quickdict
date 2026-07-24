@@ -1,4 +1,5 @@
 use gtk4::prelude::*;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::engine::types::DictInfo;
@@ -8,10 +9,11 @@ pub struct Sidebar {
     container: gtk4::Box,
     list_box: gtk4::ListBox,
     stats_label: gtk4::Label,
-    checkbuttons: std::cell::RefCell<Vec<gtk4::CheckButton>>,
-    dict_infos: std::cell::RefCell<Vec<DictInfo>>,
-    toggle_callback: std::cell::RefCell<Option<Rc<dyn Fn(usize, bool)>>>,
+    checkbuttons: RefCell<Vec<gtk4::CheckButton>>,
+    dict_infos: RefCell<Vec<DictInfo>>,
+    toggle_callback: RefCell<Option<Rc<dyn Fn(usize, bool)>>>,
     baidu_switch: gtk4::Switch,
+    baidu_toggle_handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
 impl Sidebar {
@@ -73,10 +75,11 @@ impl Sidebar {
             container,
             list_box,
             stats_label,
-            checkbuttons: std::cell::RefCell::new(Vec::new()),
-            dict_infos: std::cell::RefCell::new(Vec::new()),
-            toggle_callback: std::cell::RefCell::new(None),
+            checkbuttons: RefCell::new(Vec::new()),
+            dict_infos: RefCell::new(Vec::new()),
+            toggle_callback: RefCell::new(None),
             baidu_switch,
+            baidu_toggle_handler: RefCell::new(None),
         }
     }
 
@@ -133,21 +136,23 @@ impl Sidebar {
         *self.toggle_callback.borrow_mut() = Some(f);
     }
 
-    /// 百度翻译是否启用
-    pub fn is_baidu_enabled(&self) -> bool {
-        self.baidu_switch.is_active()
-    }
-
-    /// 设置百度翻译开关状态
-    pub fn set_baidu_enabled(&self, enabled: bool) {
-        self.baidu_switch.set_active(enabled);
-    }
-
     /// 连接百度翻译开关
     pub fn connect_baidu_toggle<F: Fn(bool) + 'static>(&self, f: F) {
         let f = Rc::new(f);
-        self.baidu_switch.connect_active_notify(move |sw| {
+        let id = self.baidu_switch.connect_active_notify(move |sw| {
             f(sw.is_active());
         });
+        self.baidu_toggle_handler.replace(Some(id));
+    }
+
+    /// 同步开关视觉状态，不触发 toggle 回调
+    pub fn sync_baidu_state(&self, enabled: bool) {
+        if let Some(ref id) = *self.baidu_toggle_handler.borrow() {
+            self.baidu_switch.block_signal(id);
+            self.baidu_switch.set_active(enabled);
+            self.baidu_switch.unblock_signal(id);
+        } else {
+            self.baidu_switch.set_active(enabled);
+        }
     }
 }

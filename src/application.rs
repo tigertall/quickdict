@@ -1,4 +1,3 @@
-use gtk4::prelude::*;
 use adw::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -51,19 +50,22 @@ impl DictionaryApplication {
         let main_window: Rc<RefCell<Option<MainWindow>>> = Rc::new(RefCell::new(None));
 
         // D-Bus translation service: channel to forward queries to main thread
-        let (lookup_tx, lookup_rx) = std::sync::mpsc::channel::<(String, tokio::sync::oneshot::Sender<String>)>();
+        let (lookup_tx, lookup_rx) =
+            std::sync::mpsc::channel::<(String, tokio::sync::oneshot::Sender<String>)>();
         crate::capture::dbus_service::set_lookup_channel(lookup_tx);
         crate::capture::dbus_service::start_dbus_service();
 
         // Poll lookup requests on main thread
         {
             let dm = state.dict_manager.clone();
-            let rx: Rc<RefCell<std::sync::mpsc::Receiver<(String, tokio::sync::oneshot::Sender<String>)>>> = Rc::new(RefCell::new(lookup_rx));
+            let rx: Rc<
+                RefCell<std::sync::mpsc::Receiver<(String, tokio::sync::oneshot::Sender<String>)>>,
+            > = Rc::new(RefCell::new(lookup_rx));
             glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
                 if let Ok(r) = rx.try_borrow_mut() {
                     while let Ok((word, sender)) = r.try_recv() {
                         // App filter now handled by extension
-                        let cleaned = crate::engine::search_engine::clean_word(&word);
+                        let cleaned = crate::engine::search_engine::clean_word(&word); // D-Bus handler: caller gives raw text
                         let articles = {
                             if let Ok(mgr) = dm.try_borrow() {
                                 let mut a = mgr.lookup_local(&cleaned);
@@ -77,16 +79,21 @@ impl DictionaryApplication {
                                 Vec::new()
                             }
                         };
-                        let items: Vec<serde_json::Value> = articles.iter().map(|a| {
-                            let text = if a.is_html {
-                                let markup = crate::views::content_view::html_to_pango_markup(&a.raw_text);
-                                // ClutterText in GNOME Shell doesn't support <a> tags — strip them
-                                strip_pango_a_tags(&markup)
-                            } else {
-                                a.raw_text.clone()
-                            };
-                            serde_json::json!({"name": a.dict_name, "text": text})
-                        }).collect();
+                        let items: Vec<serde_json::Value> = articles
+                            .iter()
+                            .map(|a| {
+                                let text = if a.is_html {
+                                    let markup = crate::views::content_view::html_to_pango_markup(
+                                        &a.raw_text,
+                                    );
+                                    // ClutterText in GNOME Shell doesn't support <a> tags — strip them
+                                    strip_pango_a_tags(&markup)
+                                } else {
+                                    a.raw_text.clone()
+                                };
+                                serde_json::json!({"name": a.dict_name, "text": text})
+                            })
+                            .collect();
                         let json = serde_json::to_string(&items).unwrap_or_else(|_| "[]".into());
                         let _ = sender.send(json);
                     }
@@ -150,7 +157,8 @@ impl DictionaryApplication {
             app.add_action(&about_action);
 
             // app.search-word (app-level, used by extension's ActivateAction)
-            let search_word_action = gio::SimpleAction::new("search-word", Some(&String::static_variant_type()));
+            let search_word_action =
+                gio::SimpleAction::new("search-word", Some(&String::static_variant_type()));
             let mw_for_search = main_window.clone();
             let dm_for_search = state.dict_manager.clone();
             search_word_action.connect_activate(move |_, param| {
@@ -183,7 +191,11 @@ impl DictionaryApplication {
                 let saved_active = state.config.active_dictionaries();
                 let dict_paths: Vec<std::path::PathBuf> = {
                     let p = state.config.dictionary_paths();
-                    if p.is_empty() { vec![] } else { p.iter().map(std::path::PathBuf::from).collect() }
+                    if p.is_empty() {
+                        vec![]
+                    } else {
+                        p.iter().map(std::path::PathBuf::from).collect()
+                    }
                 };
 
                 let config = state.config.clone();
@@ -193,7 +205,10 @@ impl DictionaryApplication {
                         Err(_) => return,
                     };
                     // Register Baidu online dict first (index 0)
-                    mgr.add_online_dict(Arc::new(crate::engine::dict_manager::BaiduDict));
+                    let (appid, apikey) = config.baidu_credentials();
+                    mgr.add_online_dict(Arc::new(crate::engine::dict_manager::BaiduDict::new(
+                        &appid, &apikey,
+                    )));
                     // Load dicts from scanned cache, or scan if empty
                     let scanned = config.scanned_dicts();
                     if !scanned.is_empty() {
@@ -207,10 +222,14 @@ impl DictionaryApplication {
                             }
                         }
                     }
-                    if !saved_active.is_empty() { mgr.restore_active_by_names(&saved_active); }
+                    if !saved_active.is_empty() {
+                        mgr.restore_active_by_names(&saved_active);
+                    }
                     // Restore all dict active states (including online + MDX)
                     let dict_states = config.load_dict_active_states();
-                    if !dict_states.is_empty() { mgr.import_active_states(&dict_states); }
+                    if !dict_states.is_empty() {
+                        mgr.import_active_states(&dict_states);
+                    }
                     // Restore saved dictionary order
                     let saved_order = config.load_dict_order();
                     if !saved_order.is_empty() {
@@ -230,10 +249,16 @@ impl DictionaryApplication {
                     *state.on_dicts_changed.borrow_mut() = Some(Box::new(move || {
                         if let Some(ref w) = *mw.borrow() {
                             if let Ok(mgr) = dm.try_borrow() {
-                                eprintln!("sidebar refresh: dicts={:?}", mgr.dict_infos().iter().map(|d|d.name.clone()).collect::<Vec<_>>());
+                                log::debug!(
+                                    "sidebar refresh: dicts={:?}",
+                                    mgr.dict_infos()
+                                        .iter()
+                                        .map(|d| d.name.clone())
+                                        .collect::<Vec<_>>()
+                                );
                                 w.refresh_sidebar(&mgr);
                             } else {
-                                eprintln!("sidebar refresh FAILED: dm borrowed");
+                                log::debug!("sidebar refresh FAILED: dm borrowed");
                             }
                         }
                     }));
@@ -256,9 +281,7 @@ impl DictionaryApplication {
         app.set_accels_for_action("app.preferences", &["<Control>comma"]);
         app.set_accels_for_action("win.search-focus", &["<Control>L"]);
 
-        Self {
-            app,
-        }
+        Self { app }
     }
 
     pub fn run(&self) {
@@ -275,18 +298,25 @@ fn strip_pango_a_tags(markup: &str) -> String {
         if c == '<' {
             let mut lookahead = chars.clone();
             let first = lookahead.next();
-            let tag_char = if first == Some('/') { lookahead.next() } else { first };
+            let tag_char = if first == Some('/') {
+                lookahead.next()
+            } else {
+                first
+            };
             if tag_char == Some('a') || tag_char == Some('A') {
                 let next = lookahead.next();
                 let is_end = first == Some('/') && (next == Some('>') || next.is_none());
-                let is_start = first != Some('/') && (next == Some(' ') || next == Some('>') || next == Some('\''));
+                let is_start = first != Some('/')
+                    && (next == Some(' ') || next == Some('>') || next == Some('\''));
                 if is_end || is_start {
                     chars = lookahead;
                     // Only skip to '>' for start tags (<a href='...'>); </a> is already consumed
                     if is_start {
                         while let Some(&ch) = chars.peek() {
                             chars.next();
-                            if ch == '>' { break; }
+                            if ch == '>' {
+                                break;
+                            }
                         }
                     }
                     continue;

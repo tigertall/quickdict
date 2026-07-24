@@ -1,10 +1,8 @@
-use gtk4::prelude::*;
 use adw::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::application::AppState;
-use crate::engine::baidu_client::BaiduTranslateClient;
 use crate::engine::types::{ArticleData, SearchResult};
 use crate::views::content_view::ContentView;
 use crate::views::search_bar::SearchBar;
@@ -25,14 +23,15 @@ impl MainWindow {
         self.sidebar.set_dictionaries(&infos);
     }
 
-
     pub fn search_word_direct(&self, word: &str, mgr: &crate::engine::dict_manager::DictManager) {
         let word = crate::engine::search_engine::clean_word(word);
         log::info!("search_word_direct: {}", word);
         self.search_bar.entry.set_text(&word);
         self.search_bar.entry.set_position(-1);
         let mut articles = mgr.lookup_local(&word);
-        if let Some(a) = mgr.try_online(&word) { articles.push(a); }
+        if let Some(a) = mgr.try_online(&word) {
+            articles.push(a);
+        }
         self._content_view.show_multi_articles(articles);
     }
 
@@ -201,8 +200,6 @@ impl MainWindow {
 
         // === 连接信号 ===
         let current_results: Rc<RefCell<Vec<SearchResult>>> = Rc::new(RefCell::new(Vec::new()));
-        // 在线查询结果共享存储（搜索和 Open in Dict 共用）
-        let local_articles: Rc<RefCell<Vec<ArticleData>>> = Rc::new(RefCell::new(Vec::new()));
 
         // 搜索
         {
@@ -210,43 +207,38 @@ impl MainWindow {
             let engine = state.search_engine.clone();
             let results_cache = current_results.clone();
             let cv = content_view.clone();
-            let sb = sidebar.clone();
-            let config = state.config.clone();
-            let la_search = local_articles.clone();
 
             search_bar.connect_search(move |query| {
+                let query = crate::engine::search_engine::clean_word(query);
                 if query.is_empty() {
                     return;
                 }
-                let query = crate::engine::search_engine::clean_word(query);
-                if query.is_empty() { return; }
                 let (res, articles) = {
                     let mgr = match manager.try_borrow() {
-                            Ok(m) => m,
-                            Err(_) => {
-                                log::warn!("DictManager already borrowed, skipping search");
-                                return;
-                            }
-                        };
+                        Ok(m) => m,
+                        Err(_) => {
+                            log::warn!("DictManager already borrowed, skipping search");
+                            return;
+                        }
+                    };
                     let res = engine.search(&query, &mgr);
                     let mut articles: Vec<ArticleData> = Vec::new();
-                    // Iterate dicts in user-defined order so articles display respects ordering
-                    for dict in mgr.active_dictionaries() {
-                        if let Some(r) = res.iter().find(|r| r.score >= 1.0 && r.dict_name == dict.info.bookname) {
+                    for dict in mgr.enabled() {
+                        if let Some(r) = res
+                            .iter()
+                            .find(|r| r.score >= 1.0 && r.dict_name == dict.name())
+                        {
                             if let Some(article) = dict.lookup_exact(&r.word) {
                                 articles.push(article);
                             }
                         }
                     }
-                    // MDX + online
-                    if let Some(article) = mgr.mdict_lookup(&query) {
+                    // 在线翻译（同步，与 search_word_direct 行为一致）
+                    if let Some(article) = mgr.try_online(&query) {
                         articles.push(article);
                     }
                     (res, articles)
                 };
-
-                // 缓存本地文章（供在线结果追加）
-                *la_search.borrow_mut() = articles.clone();
 
                 // 更新结果缓存
                 match results_cache.try_borrow_mut() {
@@ -257,46 +249,13 @@ impl MainWindow {
                     }
                 };
 
-                // 显示本地结果
+                // 显示结果
                 if res.is_empty() && articles.is_empty() {
                     cv.widget().set_visible_child_name("waiting");
                 } else if !articles.is_empty() {
                     cv.show_multi_articles(articles);
                 } else {
                     cv.show_results(&res);
-                }
-
-                // 异步百度翻译查询（不阻塞 UI）
-                if sb.is_baidu_enabled() {
-                    let (baidu_appid, baidu_secret) = config.baidu_credentials();
-                    if !baidu_appid.is_empty() && !baidu_secret.is_empty() {
-                    let query_owned = query.to_string();
-                    let (tx, rx) = std::sync::mpsc::channel::<Option<ArticleData>>();
-                    let baidu_appid = baidu_appid.clone();
-                    let baidu_secret = baidu_secret.clone();
-                    std::thread::spawn(move || {
-                        let client = BaiduTranslateClient::new(&baidu_appid, &baidu_secret);
-                        let result = client.translate(&query_owned, "zh");
-                        let _ = tx.send(result);
-                    });
-                    let local = la_search.clone();
-                    let cv_poll = cv.clone();
-                    glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
-                        match rx.try_recv() {
-                            Ok(Some(article)) => {
-                                let mut combined = local.borrow().clone();
-                                combined.push(article);
-                                cv_poll.show_multi_articles(combined);
-                                glib::ControlFlow::Break
-                            }
-                            Ok(None) => glib::ControlFlow::Break,
-                            Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-                            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                                glib::ControlFlow::Break
-                            }
-                        }
-                    });
-                    }
                 }
             });
         }
@@ -321,8 +280,8 @@ impl MainWindow {
                         Ok(m) => m,
                         Err(_) => return,
                     };
-                    for dict in mgr.active_dictionaries() {
-                        if dict.info.bookname == selected.dict_name {
+                    for dict in mgr.enabled() {
+                        if dict.name() == selected.dict_name {
                             if let Some(article) = dict.lookup_exact(&selected.word) {
                                 cv2.show_single_article(&article);
                             }
@@ -345,8 +304,12 @@ impl MainWindow {
                         let infos = mgr.dict_infos();
                         let global_idx = if idx < infos.len() {
                             let info = &infos[idx];
-                            mgr.all().iter().position(|d| d.name() == info.name && d.kind() == info.kind)
-                        } else { None };
+                            mgr.all()
+                                .iter()
+                                .position(|d| d.name() == info.name && d.kind() == info.kind)
+                        } else {
+                            None
+                        };
                         if let Some(gi) = global_idx {
                             mgr.toggle_dict(gi, enabled);
                         }
@@ -395,9 +358,11 @@ impl MainWindow {
                     if let Ok(mgr) = dm_clone.try_borrow() {
                         let infos = mgr.dict_infos();
                         sidebar_clone.set_dictionaries(&infos);
-                        let bd_enabled = mgr.online_idx("baidu")
-                            .map(|i| mgr.is_active(i)).unwrap_or(true);
-                        sidebar_clone.set_baidu_enabled(bd_enabled);
+                        let bd_enabled = mgr
+                            .online_idx("baidu")
+                            .map(|i| mgr.is_active(i))
+                            .unwrap_or(true);
+                        sidebar_clone.sync_baidu_state(bd_enabled);
                     }
                     glib::ControlFlow::Break
                 } else {
@@ -414,12 +379,16 @@ impl MainWindow {
             let cv = content_view.clone();
             cv.set_link_handler(Rc::new(move |word| {
                 let word = crate::engine::search_engine::clean_word(&word);
-                if word.is_empty() { return; }
+                if word.is_empty() {
+                    return;
+                }
                 sb_entry.set_text(&word);
                 sb_entry.set_position(-1);
                 if let Ok(mgr) = manager.try_borrow() {
                     let mut articles = mgr.lookup_local(&word);
-                    if let Some(a) = mgr.try_online(&word) { articles.push(a); }
+                    if let Some(a) = mgr.try_online(&word) {
+                        articles.push(a);
+                    }
                     cv_link.show_multi_articles(articles);
                 }
             }));
@@ -440,4 +409,3 @@ impl MainWindow {
         self.window.present();
     }
 }
-

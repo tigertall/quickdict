@@ -57,12 +57,6 @@
       <summary>Baidu API Key</summary>
       <description>API Key for Baidu LLM Text Translation API.</description>
     </key>
-    <!-- 百度翻译启用状态 -->
-    <key name="baidu-enabled" type="b">
-      <default>true</default>
-      <summary>Baidu Translate enabled</summary>
-      <description>Whether Baidu Translate is enabled.</description>
-    </key>
     <!-- 词典活跃状态（所有类型） -->
     <key name="dict-active-states" type="as">
       <default>[]</default>

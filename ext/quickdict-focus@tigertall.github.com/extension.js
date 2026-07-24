@@ -208,6 +208,14 @@ function isAppAllowed() {
 }
 
 export default class QuickDictFocusExtension extends Extension {
+    _errorId = 0;
+    _settingsId = null;
+    _themeId = null;
+    _systemSettings = null;
+    _systemThemeId = null;
+    _styleSheet = null;
+    _selId = null;
+
     enable() {
         settings = this.getSettings();
         log('[QuickDict]: focus extension enabled');

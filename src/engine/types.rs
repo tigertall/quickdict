@@ -88,5 +88,18 @@ pub trait Dictionary: Send + Sync {
     fn word_count(&self) -> usize;
     fn kind(&self) -> DictKind;
     fn lookup_exact(&self, word: &str) -> Option<ArticleData>;
+    /// 前缀搜索（默认空实现）
+    fn lookup_prefix(&self, _word: &str, _limit: usize) -> Vec<SearchResult> {
+        Vec::new()
+    }
+    /// 模糊搜索（默认空实现）
+    fn lookup_fuzzy(
+        &self,
+        _word: &str,
+        _threshold: usize,
+        _limit: usize,
+    ) -> Vec<SearchResult> {
+        Vec::new()
+    }
     fn as_any(&self) -> &dyn std::any::Any;
 }

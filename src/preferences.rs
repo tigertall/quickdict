@@ -1,10 +1,9 @@
-use gtk4::prelude::*;
+use crate::config::Config;
+use crate::engine::dict_manager::DictManager;
 use adw::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
-use crate::config::Config;
-use crate::engine::dict_manager::DictManager;
 
 /// 偏好设置窗口（单页面，分组标题）
 pub struct PreferencesWindow {
@@ -16,8 +15,16 @@ pub struct PreferencesWindow {
 }
 
 /// 重建词典行的独立实现（避免 self borrow 冲突）
-fn rebuild_dict_rows_impl(rows: &gtk4::ListBox, dm: &Rc<RefCell<DictManager>>, _cb: &Rc<dyn Fn()>, rebuild_all: &Rc<dyn Fn()>, config: &Config) {
-    while let Some(child) = rows.first_child() { rows.remove(&child); }
+fn rebuild_dict_rows_impl(
+    rows: &gtk4::ListBox,
+    dm: &Rc<RefCell<DictManager>>,
+    _cb: &Rc<dyn Fn()>,
+    rebuild_all: &Rc<dyn Fn()>,
+    config: &Config,
+) {
+    while let Some(child) = rows.first_child() {
+        rows.remove(&child);
+    }
     let infos = dm.borrow().dict_infos();
     if infos.is_empty() {
         let empty_label = gtk4::Label::new(Some("No dictionaries loaded."));
@@ -37,37 +44,77 @@ fn rebuild_dict_rows_impl(rows: &gtk4::ListBox, dm: &Rc<RefCell<DictManager>>, _
         row.set_subtitle(&format!("{} words  ·  {}", info.word_count, info.path));
         if i > 0 {
             let up_btn = gtk4::Button::from_icon_name("go-up-symbolic");
-            up_btn.add_css_class("flat"); up_btn.set_valign(gtk4::Align::Center);
-            let dm2 = dm.clone(); let ra = rebuild_all.clone();
+            up_btn.add_css_class("flat");
+            up_btn.set_valign(gtk4::Align::Center);
+            let dm2 = dm.clone();
+            let ra = rebuild_all.clone();
             let info_name = info.name.clone();
             let info_kind = info.kind.clone();
             up_btn.connect_clicked(move |_| {
-                eprintln!("BTN-UP i={}", i);
+                log::debug!("BTN-UP i={}", i);
                 if let Ok(mut mgr) = dm2.try_borrow_mut() {
-                    let global_i = mgr.all().iter().position(|d| d.name() == info_name && d.kind() == info_kind).unwrap_or(i);
-                    eprintln!("move_up({}) from {:?}", global_i, mgr.dict_infos().iter().map(|d|d.name.clone()).collect::<Vec<_>>());
+                    let global_i = mgr
+                        .all()
+                        .iter()
+                        .position(|d| d.name() == info_name && d.kind() == info_kind)
+                        .unwrap_or(i);
+                    log::debug!(
+                        "move_up({}) from {:?}",
+                        global_i,
+                        mgr.dict_infos()
+                            .iter()
+                            .map(|d| d.name.clone())
+                            .collect::<Vec<_>>()
+                    );
                     mgr.move_dict_up(global_i);
-                    eprintln!("  -> {:?}", mgr.dict_infos().iter().map(|d|d.name.clone()).collect::<Vec<_>>());
+                    log::debug!(
+                        "  -> {:?}",
+                        mgr.dict_infos()
+                            .iter()
+                            .map(|d| d.name.clone())
+                            .collect::<Vec<_>>()
+                    );
+                } else {
+                    log::debug!("move_up({}) FAILED borrow", i);
                 }
-                else { eprintln!("move_up({}) FAILED borrow", i); }
-                eprintln!("BTN-UP calling ra()");
+                log::debug!("BTN-UP calling ra()");
                 ra();
-                eprintln!("BTN-UP ra() done");
+                log::debug!("BTN-UP ra() done");
             });
             if i + 1 < infos.len() {
                 let down_btn = gtk4::Button::from_icon_name("go-down-symbolic");
-                down_btn.add_css_class("flat"); down_btn.set_valign(gtk4::Align::Center);
-                let dm3 = dm.clone(); let ra = rebuild_all.clone();
+                down_btn.add_css_class("flat");
+                down_btn.set_valign(gtk4::Align::Center);
+                let dm3 = dm.clone();
+                let ra = rebuild_all.clone();
                 let info_name = info.name.clone();
                 let info_kind = info.kind.clone();
                 down_btn.connect_clicked(move |_| {
                     if let Ok(mut mgr) = dm3.try_borrow_mut() {
-                        let global_i = mgr.all().iter().position(|d| d.name() == info_name && d.kind() == info_kind).unwrap_or(i);
-                        eprintln!("move_down({}) from {:?}", global_i, mgr.dict_infos().iter().map(|d|d.name.clone()).collect::<Vec<_>>());
+                        let global_i = mgr
+                            .all()
+                            .iter()
+                            .position(|d| d.name() == info_name && d.kind() == info_kind)
+                            .unwrap_or(i);
+                        log::debug!(
+                            "move_down({}) from {:?}",
+                            global_i,
+                            mgr.dict_infos()
+                                .iter()
+                                .map(|d| d.name.clone())
+                                .collect::<Vec<_>>()
+                        );
                         mgr.move_dict_down(global_i);
-                        eprintln!("  -> {:?}", mgr.dict_infos().iter().map(|d|d.name.clone()).collect::<Vec<_>>());
+                        log::debug!(
+                            "  -> {:?}",
+                            mgr.dict_infos()
+                                .iter()
+                                .map(|d| d.name.clone())
+                                .collect::<Vec<_>>()
+                        );
+                    } else {
+                        log::debug!("move_down({}) FAILED borrow", i);
                     }
-                    else { eprintln!("move_down({}) FAILED borrow", i); }
                     ra();
                 });
                 let arrow_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
@@ -80,18 +127,38 @@ fn rebuild_dict_rows_impl(rows: &gtk4::ListBox, dm: &Rc<RefCell<DictManager>>, _
             }
         } else if i + 1 < infos.len() {
             let down_btn = gtk4::Button::from_icon_name("go-down-symbolic");
-            down_btn.add_css_class("flat"); down_btn.set_valign(gtk4::Align::Center);
-            let dm3 = dm.clone(); let ra = rebuild_all.clone();
+            down_btn.add_css_class("flat");
+            down_btn.set_valign(gtk4::Align::Center);
+            let dm3 = dm.clone();
+            let ra = rebuild_all.clone();
             let info_name = info.name.clone();
             let info_kind = info.kind.clone();
             down_btn.connect_clicked(move |_| {
                 if let Ok(mut mgr) = dm3.try_borrow_mut() {
-                    let global_i = mgr.all().iter().position(|d| d.name() == info_name && d.kind() == info_kind).unwrap_or(i);
-                    eprintln!("move_down({}) from {:?}", global_i, mgr.dict_infos().iter().map(|d|d.name.clone()).collect::<Vec<_>>());
+                    let global_i = mgr
+                        .all()
+                        .iter()
+                        .position(|d| d.name() == info_name && d.kind() == info_kind)
+                        .unwrap_or(i);
+                    log::debug!(
+                        "move_down({}) from {:?}",
+                        global_i,
+                        mgr.dict_infos()
+                            .iter()
+                            .map(|d| d.name.clone())
+                            .collect::<Vec<_>>()
+                    );
                     mgr.move_dict_down(global_i);
-                    eprintln!("  -> {:?}", mgr.dict_infos().iter().map(|d|d.name.clone()).collect::<Vec<_>>());
+                    log::debug!(
+                        "  -> {:?}",
+                        mgr.dict_infos()
+                            .iter()
+                            .map(|d| d.name.clone())
+                            .collect::<Vec<_>>()
+                    );
+                } else {
+                    log::debug!("move_down({}) FAILED borrow", i);
                 }
-                else { eprintln!("move_down({}) FAILED borrow", i); }
                 ra();
             });
             row.add_suffix(&down_btn);
@@ -109,7 +176,9 @@ fn rebuild_dict_rows_impl(rows: &gtk4::ListBox, dm: &Rc<RefCell<DictManager>>, _
 }
 
 fn rebuild_path_rows(rows: &gtk4::ListBox, config: &Config, _cb: &Rc<dyn Fn()>) {
-    while let Some(child) = rows.first_child() { rows.remove(&child); }
+    while let Some(child) = rows.first_child() {
+        rows.remove(&child);
+    }
     let paths = config.dictionary_paths();
     if paths.is_empty() {
         let empty_label = gtk4::Label::new(Some("No directories added."));
@@ -128,7 +197,8 @@ fn rebuild_path_rows(rows: &gtk4::ListBox, config: &Config, _cb: &Rc<dyn Fn()>) 
         row.set_title(path);
         row.set_subtitle("Dictionary directory");
         let del_btn = gtk4::Button::from_icon_name("user-trash-symbolic");
-        del_btn.add_css_class("flat"); del_btn.add_css_class("circular");
+        del_btn.add_css_class("flat");
+        del_btn.add_css_class("circular");
         del_btn.set_valign(gtk4::Align::Center);
         {
             let cfg = config.clone();
@@ -153,7 +223,11 @@ fn rebuild_path_rows(rows: &gtk4::ListBox, config: &Config, _cb: &Rc<dyn Fn()>) 
 impl PreferencesWindow {
     /// 创建偏好设置窗口
     /// `on_dicts_changed`: 词典增删后回调，用于同步主界面侧边栏
-    pub fn new(config: &Config, dm: Rc<RefCell<DictManager>>, on_dicts_changed: Box<dyn Fn()>) -> Self {
+    pub fn new(
+        config: &Config,
+        dm: Rc<RefCell<DictManager>>,
+        on_dicts_changed: Box<dyn Fn()>,
+    ) -> Self {
         let on_dicts_changed: Rc<dyn Fn()> = Rc::from(on_dicts_changed);
         let window = adw::PreferencesWindow::new();
         let page = adw::PreferencesPage::new();
@@ -198,20 +272,24 @@ impl PreferencesWindow {
                 let config = config.clone();
                 let cb = cb.clone();
                 let path_rows_c = path_rows_c.clone();
-                dialog.select_folder(None::<&gtk4::Window>, gio::Cancellable::NONE, move |result| {
-                    if let Ok(dir) = result {
-                        if let Some(path) = dir.path() {
-                            let path_str = path.to_string_lossy().to_string();
-                            let mut all_paths = config.dictionary_paths();
-                            if !all_paths.contains(&path_str) {
-                                all_paths.push(path_str.clone());
-                                config.set_dictionary_paths(&all_paths);
-                                log::info!("Added dictionary directory: {}", path_str);
-                                rebuild_path_rows(&path_rows_c, &config, &cb);
+                dialog.select_folder(
+                    None::<&gtk4::Window>,
+                    gio::Cancellable::NONE,
+                    move |result| {
+                        if let Ok(dir) = result {
+                            if let Some(path) = dir.path() {
+                                let path_str = path.to_string_lossy().to_string();
+                                let mut all_paths = config.dictionary_paths();
+                                if !all_paths.contains(&path_str) {
+                                    all_paths.push(path_str.clone());
+                                    config.set_dictionary_paths(&all_paths);
+                                    log::info!("Added dictionary directory: {}", path_str);
+                                    rebuild_path_rows(&path_rows_c, &config, &cb);
+                                }
                             }
                         }
-                    }
-                });
+                    },
+                );
             });
         }
         // Scan button in same group
@@ -219,22 +297,27 @@ impl PreferencesWindow {
             let config = config.clone();
             let dm = dm.clone();
             let cb = on_dicts_changed.clone();
-            let dict_rows_c = dict_rows.clone();
             let rfn_cell_c = rfn_cell.clone();
             scan_all_btn.connect_clicked(move |_| {
                 let config = config.clone();
                 let dm = dm.clone();
                 let cb = cb.clone();
-                let _dict_rows_c = dict_rows_c.clone();
                 let rfn_cell_c = rfn_cell_c.clone();
                 let (tx, rx) = std::sync::mpsc::channel();
-                let dirs: Vec<std::path::PathBuf> = config.dictionary_paths().iter().map(std::path::PathBuf::from).collect();
+                let dirs: Vec<std::path::PathBuf> = config
+                    .dictionary_paths()
+                    .iter()
+                    .map(std::path::PathBuf::from)
+                    .collect();
                 if dirs.is_empty() {
                     // No directories: clear all scanned dicts
                     config.set_scanned_dicts(&[]);
                     if let Ok(mut mgr) = dm.try_borrow_mut() {
                         mgr.clear_all();
-                        mgr.add_online_dict(Arc::new(crate::engine::dict_manager::BaiduDict));
+                        let (appid, apikey) = config.baidu_credentials();
+                        mgr.add_online_dict(Arc::new(crate::engine::dict_manager::BaiduDict::new(
+                            &appid, &apikey,
+                        )));
                     }
                     cb();
                     rfn_cell_c.borrow().as_ref().map(|f| f());
@@ -246,30 +329,38 @@ impl PreferencesWindow {
                     let _ = tx.send(result);
                 });
                 let rfn_clone = rfn_cell_c.clone();
-                glib::idle_add_local(move || {
-                    match rx.try_recv() {
-                        Ok(Ok(found)) => {
-                            let count = found.len();
-                            config.set_scanned_dicts(&found);
-                            if let Ok(mut mgr) = dm.try_borrow_mut() {
-                                mgr.add_online_dict(Arc::new(crate::engine::dict_manager::BaiduDict));
-                                mgr.sync_from_cache(&found);
-                                let dict_states = config.load_dict_active_states();
-                                if !dict_states.is_empty() { mgr.import_active_states(&dict_states); }
-                                config.save_dict_active_states(&mgr.export_active_states());
+                glib::idle_add_local(move || match rx.try_recv() {
+                    Ok(Ok(found)) => {
+                        let count = found.len();
+                        config.set_scanned_dicts(&found);
+                        if let Ok(mut mgr) = dm.try_borrow_mut() {
+                            let (appid, apikey) = config.baidu_credentials();
+                            mgr.add_online_dict(Arc::new(
+                                crate::engine::dict_manager::BaiduDict::new(&appid, &apikey),
+                            ));
+                            mgr.sync_from_cache(&found);
+                            let dict_states = config.load_dict_active_states();
+                            if !dict_states.is_empty() {
+                                mgr.import_active_states(&dict_states);
                             }
-                            log::info!("Scanned {} dictionaries", count);
-                            cb();
-                            {
-                                let r = rfn_clone.borrow();
-                                if let Some(ref f) = *r { f(); }
-                            }
-                            glib::ControlFlow::Break
+                            config.save_dict_active_states(&mgr.export_active_states());
                         }
-                        Ok(Err(e)) => { log::warn!("Scan error: {}", e); glib::ControlFlow::Break }
-                        Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-                        Err(_) => glib::ControlFlow::Break,
+                        log::info!("Scanned {} dictionaries", count);
+                        cb();
+                        {
+                            let r = rfn_clone.borrow();
+                            if let Some(ref f) = *r {
+                                f();
+                            }
+                        }
+                        glib::ControlFlow::Break
                     }
+                    Ok(Err(e)) => {
+                        log::warn!("Scan error: {}", e);
+                        glib::ControlFlow::Break
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+                    Err(_) => glib::ControlFlow::Break,
                 });
             });
         }
@@ -284,7 +375,9 @@ impl PreferencesWindow {
         // === Baidu Translate ===
         let baidu_group = adw::PreferencesGroup::new();
         baidu_group.set_title("Baidu Translate");
-        baidu_group.set_description(Some("Configure Baidu LLM Text Translation API credentials."));
+        baidu_group.set_description(Some(
+            "Configure Baidu LLM Text Translation API credentials.",
+        ));
 
         let (current_appid, current_secret) = config.baidu_credentials();
 
@@ -344,7 +437,13 @@ impl PreferencesWindow {
         window.add(&page);
 
         let config = config.clone();
-        let pref = Self { window, dict_rows: dict_rows.clone(), path_rows: path_rows.clone(), rebuild_fn: rfn_cell, config: config.clone() };
+        let pref = Self {
+            window,
+            dict_rows: dict_rows.clone(),
+            path_rows: path_rows.clone(),
+            rebuild_fn: rfn_cell,
+            config: config.clone(),
+        };
         {
             let rfn = pref.rebuild_fn.clone();
             let dm2 = dm.clone();
@@ -359,8 +458,10 @@ impl PreferencesWindow {
                 let cfg2 = cfg.clone();
                 let paths3 = paths2.clone();
                 move || {
-                    eprintln!("rebuild_all: calling rfn + cb");
-                    if let Some(ref f) = *rfn2.borrow() { f(); }
+                    log::debug!("rebuild_all: calling rfn + cb");
+                    if let Some(ref f) = *rfn2.borrow() {
+                        f();
+                    }
                     cb3();
                     rebuild_path_rows(&paths3, &cfg2, &cb3);
                     if let Ok(mgr) = dm_order.try_borrow() {
@@ -383,10 +484,15 @@ impl PreferencesWindow {
             let rfn = self.rebuild_fn.clone();
             let cb2 = cb.clone();
             move || {
-                eprintln!("rebuild_dict_rows ra() enter");
-                if let Some(ref f) = *rfn.borrow() { eprintln!("  calling stored fn"); f(); } else { eprintln!("  stored fn is None!"); }
+                log::debug!("rebuild_dict_rows ra() enter");
+                if let Some(ref f) = *rfn.borrow() {
+                    log::debug!("  calling stored fn");
+                    f();
+                } else {
+                    log::debug!("  stored fn is None!");
+                }
                 cb2();
-                eprintln!("rebuild_dict_rows ra() done");
+                log::debug!("rebuild_dict_rows ra() done");
             }
         });
         rebuild_dict_rows_impl(&self.dict_rows, dm, cb, &rebuild_all, &self.config);
