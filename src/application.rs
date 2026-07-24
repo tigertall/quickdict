@@ -86,6 +86,14 @@ impl DictionaryApplication {
                                     let markup = crate::views::content_view::html_to_pango_markup(
                                         &a.raw_text,
                                     );
+                                    eprintln!(
+                                        "\n=== [D-Bus: {}] ===\n--- RAW ({}B) ---\n{}\n--- PANGO ({}B) ---\n{}",
+                                        a.dict_name,
+                                        a.raw_text.len(),
+                                        a.raw_text,
+                                        markup.len(),
+                                        markup,
+                                    );
                                     // ClutterText in GNOME Shell doesn't support <a> tags — strip them
                                     strip_pango_a_tags(&markup)
                                 } else {

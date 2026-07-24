@@ -59,9 +59,11 @@ impl ArticleExpander {
             label.set_use_markup(true);
             let safe_text = sanitize_null_bytes(&article.raw_text);
             let markup = html_to_pango_markup(&safe_text);
+            log_raw_to_pango(&article.dict_name, &safe_text, &markup);
             label.set_markup(&markup);
         } else {
             let safe_text = sanitize_null_bytes(&article.raw_text);
+            eprintln!("\n=== [{}] ===\n--- PLAINTEXT ({}B) ---\n{}", article.dict_name, safe_text.len(), safe_text);
             label.set_label(&safe_text);
         }
 
@@ -213,6 +215,13 @@ impl ContentView {
     }
 }
 
+fn log_raw_to_pango(dict: &str, raw: &str, pango: &str) {
+    eprintln!(
+        "\n=== [{}] ===\n--- RAW ({}B) ---\n{}\n--- PANGO ({}B) ---\n{}",
+        dict, raw.len(), raw, pango.len(), pango,
+    );
+}
+
 /// HTML → Pango markup (保留 color/font/b/i/u/sub/sup/tt 等格式)
 pub(crate) fn html_to_pango_markup(html: &str) -> String {
     let mut result = String::with_capacity(html.len());
@@ -303,16 +312,36 @@ pub(crate) fn html_to_pango_markup(html: &str) -> String {
                 }
                 "font" | "span" => {
                     if !closing {
+                        let has_block = is_style_block(&attrs) || is_class_block(&attrs);
+                        if has_block && !result.ends_with('\n') && !result.is_empty() {
+                            result.push('\n');
+                        }
                         let c = extract_attr_value(&attrs, "color")
                             .or_else(|| {
                                 if tag_name == "span" { extract_style_color(&attrs) } else { None }
                             });
+                        if has_block {
+                            // Push sentinel BEFORE color tag so close drains correctly
+                            tag_stack.push("_block".into());
+                        }
                         if let Some(c) = c {
                             let c = normalize_pango_color(&c);
                             push_open_tag("span", Some(("foreground", &escape_pango_attr(&c))), &mut result, &mut tag_stack);
                         }
                     } else {
-                        close_tags_until(&mut result, &mut tag_stack, "span");
+                        // Close block spans first, inserting trailing newline
+                        if let Some(pos) = tag_stack.iter().rposition(|t| t == "_block") {
+                            // Close everything up to and including the block sentinel
+                            for t in tag_stack.drain(pos..).rev() {
+                                if t != "_block" {
+                                    write!(result, "</{}>", t).unwrap();
+                                }
+                            }
+                            if !result.ends_with('\n') { result.push('\n'); }
+                            skip_ws = true;
+                        } else {
+                            close_tags_until(&mut result, &mut tag_stack, "span");
+                        }
                     }
                 }
                 "a" => {
@@ -410,11 +439,10 @@ pub(crate) fn html_to_pango_markup(html: &str) -> String {
         }
     }
 
-    // 关闭所有未闭合标签
+    // 关闭所有未闭合标签（跳过 _block sentinel）
     for tag in tag_stack.iter().rev() {
-        result.push_str("</");
-        result.push_str(tag);
-        result.push('>');
+        if tag == "_block" { result.push('\n'); continue; }
+        write!(result, "</{}>", tag).unwrap();
     }
 
     // 压缩多余空行（3+ → 2）
@@ -589,7 +617,6 @@ fn extract_attr_value(attrs: &str, name: &str) -> Option<String> {
 
 fn extract_style_color(attrs: &str) -> Option<String> {
     let attrs_lower = attrs.to_lowercase();
-    // Find standalone "color:" that is NOT part of "background-color:" etc.
     let mut search_start = 0;
     while let Some(pos) = attrs_lower[search_start..].find("color:") {
         let abs_pos = search_start + pos;
@@ -603,7 +630,6 @@ fn extract_style_color(attrs: &str) -> Option<String> {
         }
         search_start = abs_pos + 1;
     }
-    // Fallback: non-standard "color=" in style (also skip compound props)
     search_start = 0;
     while let Some(pos) = attrs_lower[search_start..].find("color=") {
         let abs_pos = search_start + pos;
@@ -622,6 +648,47 @@ fn extract_style_color(attrs: &str) -> Option<String> {
         search_start = abs_pos + 1;
     }
     None
+}
+
+/// Check if style contains `display:block` or `display:inline-block`
+fn is_style_block(attrs: &str) -> bool {
+    let attrs_lower = attrs.to_lowercase();
+    let mut search_start = 0;
+    while let Some(pos) = attrs_lower[search_start..].find("display:") {
+        let abs_pos = search_start + pos;
+        if abs_pos == 0 || {
+            let prev = attrs_lower.as_bytes()[abs_pos - 1];
+            !prev.is_ascii_alphanumeric() && prev != b'-'
+        } {
+            let after = &attrs_lower[abs_pos + 8..].trim_start();
+            if after.starts_with("block") || after.starts_with("inline-block") {
+                return true;
+            }
+        }
+        search_start = abs_pos + 1;
+    }
+    false
+}
+
+/// Known dictionary class names that act as block-level sections.
+/// Matches common MDX dictionary CSS class conventions (sf_ecce.css style).
+const BLOCK_CLASSES: &[&str] = &[
+    "trs",   // translation/part-of-speech section
+    "syno",  // synonyms section
+    "phrs",  // phrases section
+    "phr",   // individual phrase entry
+    "wfs",   // word forms section
+    "wf",    // individual word form entry
+    "exam",  // example sentence section
+];
+
+/// Check if class attribute contains a known block-level dictionary class name
+fn is_class_block(attrs: &str) -> bool {
+    let class_val = match extract_attr_value(attrs, "class") {
+        Some(v) => v,
+        None => return false,
+    };
+    class_val.split_whitespace().any(|c| BLOCK_CLASSES.contains(&c))
 }
 
 fn escape_pango_attr(s: &str) -> String {

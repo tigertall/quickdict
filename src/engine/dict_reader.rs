@@ -139,7 +139,7 @@ impl DictionaryReader {
                     combined_text.push_str("\n\n");
                 }
                 if multi_entry {
-                    combined_text.push_str(&format!("【释义 {}】\n", i + 1));
+                    combined_text.push_str(&format!("◎\n"));
                 }
                 combined_text.push_str(&article.raw_text);
             }
