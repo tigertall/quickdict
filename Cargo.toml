@@ -49,11 +49,11 @@ tokio = { version = "1.40", features = ["rt", "sync", "time", "macros"] }
 html-escape = "0.2"
 
 # DBus (always needed)
-zbus = { version = "5.0", default-features = false, features = ["tokio"] }
+zbus = { version = "=4.4.0", default-features = false, features = ["tokio"] }
 futures-util = "0.3"
 
 # 百度翻译 API (always needed)
-ureq = { version = "2", features = ["tls"] }
+ureq = { version = "=2.0.2", features = ["tls"] }
 md5 = "0.7"
 
 [profile.release]

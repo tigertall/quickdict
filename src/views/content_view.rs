@@ -367,12 +367,14 @@ pub(crate) fn html_to_pango_markup(html: &str) -> String {
                         close_tags_until(&mut result, &mut tag_stack, "a");
                     }
                 }
-                tag if let Some(pango) = passthrough_tag(tag) => {
-                    if !closing {
-                        if pango == "b" { try_insert_oxford_newline(&mut chars, &mut result); }
-                        push_open_tag(pango, None, &mut result, &mut tag_stack);
-                    } else {
-                        close_tags_until(&mut result, &mut tag_stack, pango);
+                tag => {
+                    if let Some(pango) = passthrough_tag(tag) {
+                        if !closing {
+                            if pango == "b" { try_insert_oxford_newline(&mut chars, &mut result); }
+                            push_open_tag(pango, None, &mut result, &mut tag_stack);
+                        } else {
+                            close_tags_until(&mut result, &mut tag_stack, pango);
+                        }
                     }
                 }
                 _ => {}
