@@ -44,6 +44,38 @@ export default class QuickDictPreferences extends ExtensionPreferences {
         themeGroup.add(themeRow);
         page.add(themeGroup);
 
+        // Hover Translation (enabled/disabled via the panel menu switch)
+        let hoverGroup = new Adw.PreferencesGroup({ title: 'Hover Translation' });
+        hoverGroup.set_description('Toggle via the panel menu switch. Hover over a word to translate via OCR.');
+
+        let delayRow = new Adw.SpinRow({
+            title: 'Hover Delay',
+            subtitle: 'Milliseconds before triggering (200-2000)',
+            adjustment: new Gtk.Adjustment({ lower: 200, upper: 2000, step_increment: 100 }),
+            value: settings.get_int('hover-delay')
+        });
+        settings.bind('hover-delay', delayRow, 'value', Gio.SettingsBindFlags.DEFAULT);
+        hoverGroup.add(delayRow);
+
+        let modifierRow = new Adw.ComboRow({ title: 'Modifier Key' });
+        let modifierModel = new Gtk.StringList();
+        modifierModel.append('None');
+        modifierModel.append('Ctrl');
+        modifierModel.append('Alt');
+        modifierModel.append('Shift');
+        modifierModel.append('Super');
+        modifierRow.set_model(modifierModel);
+        let keys = ['none', 'Ctrl', 'Alt', 'Shift', 'Super'];
+        let currentMod = settings.get_string('hover-modifier');
+        let modIdx = keys.indexOf(currentMod);
+        modifierRow.set_selected(modIdx >= 0 ? modIdx : 0);
+        modifierRow.connect('notify::selected', (row) => {
+            settings.set_string('hover-modifier', keys[row.selected] || 'none');
+        });
+        hoverGroup.add(modifierRow);
+
+        page.add(hoverGroup);
+
         window.add(page);
     }
 }

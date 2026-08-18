@@ -16,5 +16,31 @@
       <summary>Popup color theme</summary>
       <description>Popup color theme: 'auto' (follow system), 'dark', or 'light'.</description>
     </key>
+    <key name="hover-monitor" type="b">
+      <default>false</default>
+      <summary>Enable hover translation</summary>
+      <description>Hover over a word to translate automatically via OCR.</description>
+    </key>
+    <key name="hover-delay" type="i">
+      <default>400</default>
+      <range min="200" max="2000"/>
+      <summary>Hover delay in milliseconds</summary>
+      <description>Milliseconds before triggering translation after mouse stops.</description>
+    </key>
+    <key name="hover-modifier" type="s">
+      <default>"none"</default>
+      <summary>Hover modifier key</summary>
+      <description>Modifier key required for hover: 'none', 'Ctrl', 'Alt', 'Shift', or 'Super'.</description>
+    </key>
+    <key name="debug-save-capture" type="b">
+      <default>false</default>
+      <summary>Debug: save OCR capture images</summary>
+      <description>Save each OCR capture PNG to /tmp/quickdict-ocr for inspection.</description>
+    </key>
+    <key name="debug-log" type="b">
+      <default>false</default>
+      <summary>Debug: verbose logging</summary>
+      <description>Print OCR lookup progress logs (captured region, result counts) to the journal.</description>
+    </key>
   </schema>
 </schemalist>

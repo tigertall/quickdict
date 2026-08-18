@@ -2,6 +2,8 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
 import Pango from 'gi://Pango';
+import Clutter from 'gi://Clutter';
+import Shell from 'gi://Shell';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
@@ -21,6 +23,13 @@ let popup = null;
 let activeSignals = [];
 let leaveTimeoutId = 0;
 const BUFFER_PX = 10;
+
+// 悬停取词状态
+let hoverPollId = 0;
+let hoverTimerId = 0;
+let lastHoverX = -1;
+let lastHoverY = -1;
+let isHoverPopupActive = false;
 
 function isSystemDark() {
     try {
@@ -86,9 +95,10 @@ function closePopup() {
     popup.visible = false;
     popup.remove_all_children();
     ungrab();
+    isHoverPopupActive = false;
 }
 
-function showResults(jsonStr) {
+function showResults(jsonStr, titleWord) {
     const box = ensurePopup();
     
     closePopup();
@@ -97,6 +107,13 @@ function showResults(jsonStr) {
     let results = [];
     try { results = JSON.parse(jsonStr); } catch (e) {}
     if (!results || results.length === 0) return;
+
+    // 单词标题（OCR 取词时显示识别出的单词）
+    if (titleWord) {
+        let theme = resolveTheme();
+        let wClass = (theme === 'light') ? 'quickdict-word-light' : 'quickdict-word-dark';
+        box.add_child(new St.Label({ text: titleWord, style_class: wClass }));
+    }
 
     const scroll = new St.ScrollView({ hscrollbar_policy: St.PolicyType.NEVER, vscrollbar_policy: St.PolicyType.AUTOMATIC,
         x_expand: true, y_expand: true });
@@ -154,6 +171,7 @@ function showResults(jsonStr) {
     box.visible = true;
 
     activeSignals.push(box.connect('enter-event', () => {
+        isHoverPopupActive = true;
         if (leaveTimeoutId) {
             // log('[QuickDict] 鼠标在 200ms 内重返弹窗内部，成功拦截并取消退场定时器');
             GLib.source_remove(leaveTimeoutId);
@@ -204,7 +222,173 @@ function isAppAllowed() {
     let allowed = filter.split(',').map(s => s.trim().toLowerCase());
     let win = global.display.get_focus_window();
     let wmClass = (win ? win.get_wm_class() || '' : '').toLowerCase();
-    return allowed.some(a => wmClass.includes(a));
+    let ok = allowed.some(a => wmClass.includes(a));
+    return ok;
+}
+
+function isModifierActive(mods, modifierKey) {
+    if (modifierKey === 'none') return true;
+    switch (modifierKey) {
+        case 'Ctrl': return !!(mods & Clutter.ModifierType.CONTROL_MASK);
+        case 'Alt': return !!(mods & Clutter.ModifierType.MOD1_MASK);
+        case 'Shift': return !!(mods & Clutter.ModifierType.SHIFT_MASK);
+        case 'Super': return !!(mods & Clutter.ModifierType.MOD4_MASK);
+        default: return true;
+    }
+}
+
+// --- OCR capture (replaces AT-SPI word extraction) ---
+// Use Shell.Screenshot (libshell GI) directly: the extension runs inside
+// the GNOME Shell process, so we can capture compositor frames without
+// going through D-Bus. The org.gnome.Shell.Screenshot D-Bus service
+// restricts callers to a whitelist since GNOME 49 (SettingsDaemon
+// MediaKeys and the portal backend), and a synchronous D-Bus call to
+// the shell's own service would deadlock the main loop.
+const CAPTURE_W = 320;
+const CAPTURE_H = 64;
+const OCR_DEBUG_DIR = '/tmp/quickdict-ocr';
+let lastOcrX = -1;
+let lastOcrY = -1;
+let ocrInFlight = false;
+
+// Save captured PNG to the debug dir for inspection (non-fatal on failure)
+function saveOcrDebugPng(png, sx, sy) {
+    try {
+        let dir = Gio.File.new_for_path(OCR_DEBUG_DIR);
+        if (!dir.query_exists(null))
+            dir.make_directory_with_parents(null);
+        let stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        let path = OCR_DEBUG_DIR + '/ocr-' + stamp + '-' + sx + '-' + sy + '.png';
+        GLib.file_set_contents(path, png);
+        log('[QuickDict] OCR: saved debug capture to ' + path);
+    } catch (e) {
+        log('[QuickDict] OCR: failed to save debug capture: ' + e);
+    }
+}
+
+// Async capture of the screen region (sx, sy, CAPTURE_W, CAPTURE_H) as PNG bytes
+function captureRegionPng(sx, sy) {
+    return new Promise((resolve, reject) => {
+        try {
+            let shooter = new Shell.Screenshot();
+            let stream = Gio.MemoryOutputStream.new_resizable();
+            shooter.screenshot_area(sx, sy, CAPTURE_W, CAPTURE_H, stream)
+                .then(() => {
+                    // steal_as_bytes() requires the stream to be closed first
+                    stream.close(null);
+                    resolve(stream.steal_as_bytes().toArray());
+                })
+                .catch(e => {
+                    reject(e);
+                });
+        } catch (e) {
+            reject(e);
+        }
+    });
+}
+
+// Debug-level log: only printed when debug-log is enabled (default off)
+function debugLog(msg) {
+    if (settings && settings.get_boolean('debug-log')) log(msg);
+}
+
+function triggerHoverLookup(x, y) {
+    // Position-based dedup: same spot within 5px already looked up
+    if (Math.abs(x - lastOcrX) < 5 && Math.abs(y - lastOcrY) < 5) return;
+    if (ocrInFlight) return;
+    lastOcrX = x;
+    lastOcrY = y;
+    ocrInFlight = true;
+
+    // Clamp capture region to screen bounds
+    let sx = Math.max(0, Math.min(x - Math.floor(CAPTURE_W / 2), global.screen_width - CAPTURE_W));
+    let sy = Math.max(0, Math.min(y - Math.floor(CAPTURE_H / 2), global.screen_height - CAPTURE_H));
+
+    captureRegionPng(sx, sy).then(png => {
+        // 调试截图保存由 GSettings 开关控制（默认关闭）
+        if (settings && settings.get_boolean('debug-save-capture')) {
+            saveOcrDebugPng(png, sx, sy);
+        }
+        let b64 = GLib.base64_encode(png);
+        // Cursor offset relative to region top-left
+        let cx = x - sx;
+        let cy = y - sy;
+        debugLog('[QuickDict] OCR: captured ' + CAPTURE_W + 'x' + CAPTURE_H + ' at (' + sx + ',' + sy + ') cursor offset (' + cx + ',' + cy + ')');
+        Gio.DBus.session.call(DBUS_FACE, DBUS_PATH, DBUS_FACE, 'LookupImage',
+            GLib.Variant.new('(siiii)', [b64, cx, cy, CAPTURE_W, CAPTURE_H]), null, Gio.DBusCallFlags.NONE, 10000, null,
+            (_conn, res) => {
+                try {
+                    let data = Gio.DBus.session.call_finish(res).deepUnpack()[0];
+                    // LookupImage 返回 {"word": ..., "results": [...]}
+                    let resp = JSON.parse(data);
+                    let results = (resp && resp.results) || [];
+                    let word = (resp && resp.word) || null;
+                    if (!results || results.length === 0) {
+                        debugLog('[QuickDict] OCR: no results (empty response)');
+                        closePopup();
+                        return;
+                    }
+                    debugLog('[QuickDict] OCR: got ' + results.length + ' result(s), showing popup');
+                    if (word) lastWord = word;
+                    showResults(JSON.stringify(results), word);
+                    isHoverPopupActive = true;
+                } catch (e) {
+                    log('[QuickDict] OCR: LookupImage failed: ' + e);
+                    closePopup();
+                }
+            }
+        );
+    }).catch(e => {
+        log('[QuickDict] OCR: capture failed: ' + e);
+    }).finally(() => {
+        ocrInFlight = false;
+    });
+}
+
+function pollHover() {
+    if (!settings || !settings.get_boolean('hover-monitor')) return;
+    if (isHoverPopupActive) return;
+    let pointer = global.get_pointer();
+    let x = pointer[0];
+    let y = pointer[1];
+    let mods = pointer.length > 2 ? pointer[2] : 0;
+    if (x === lastHoverX && y === lastHoverY) return;
+    lastHoverX = x;
+    lastHoverY = y;
+    if (hoverTimerId) {
+        GLib.source_remove(hoverTimerId);
+        hoverTimerId = 0;
+    }
+    let modifierKey = settings.get_string('hover-modifier');
+    if (!isModifierActive(mods, modifierKey)) return;
+    if (!isAppAllowed()) return;
+    let delay = settings.get_int('hover-delay');
+    hoverTimerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
+        hoverTimerId = 0;
+        triggerHoverLookup(lastHoverX, lastHoverY);
+        return GLib.SOURCE_REMOVE;
+    });
+}
+
+function startHoverPolling() {
+    if (hoverPollId) return;
+    log('[QuickDict] hover polling started (50ms interval)');
+    hoverPollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+        pollHover();
+        return GLib.SOURCE_CONTINUE;
+    });
+}
+
+function stopHoverPolling() {
+    if (hoverPollId) {
+        log('[QuickDict] hover polling stopped');
+        GLib.source_remove(hoverPollId);
+        hoverPollId = 0;
+    }
+    if (hoverTimerId) {
+        GLib.source_remove(hoverTimerId);
+        hoverTimerId = 0;
+    }
 }
 
 export default class QuickDictFocusExtension extends Extension {
@@ -215,6 +399,7 @@ export default class QuickDictFocusExtension extends Extension {
     _systemThemeId = null;
     _styleSheet = null;
     _selId = null;
+    _hoverMonitorId = null;
 
     enable() {
         settings = this.getSettings();
@@ -224,10 +409,12 @@ export default class QuickDictFocusExtension extends Extension {
         let icon = new St.Icon({ icon_name: 'accessories-dictionary-symbolic', style_class: 'system-status-icon' });
         panelButton.add_child(icon);
 
+        // 任一功能启用即全亮，全部禁用才变暗
         let updateIcon = () => {
             if (this._errorId) { GLib.source_remove(this._errorId); this._errorId = 0; }
             icon.set_style(null);
-            icon.opacity = settings.get_boolean('clipboard-monitor') ? 255 : 100;
+            let anyEnabled = settings.get_boolean('clipboard-monitor') || settings.get_boolean('hover-monitor');
+            icon.opacity = anyEnabled ? 255 : 100;
         };
 
         let showError = () => {
@@ -242,6 +429,22 @@ export default class QuickDictFocusExtension extends Extension {
         panelButton.menu.addMenuItem(monitorItem);
         this._settingsId = settings.connect('changed::clipboard-monitor', () => { monitorItem.setToggleState(settings.get_boolean('clipboard-monitor')); updateIcon(); });
 
+        // 悬停取词开关（与 Clipboard Monitor 同级别）
+        let hoverItem = new PopupMenu.PopupSwitchMenuItem('Hover Translation', settings.get_boolean('hover-monitor'));
+        hoverItem.connect('toggled', (item, state) => { settings.set_boolean('hover-monitor', state); updateIcon(); });
+        panelButton.menu.addMenuItem(hoverItem);
+        this._hoverMonitorId = settings.connect('changed::hover-monitor', () => {
+            hoverItem.setToggleState(settings.get_boolean('hover-monitor'));
+            updateIcon();
+            if (settings.get_boolean('hover-monitor')) {
+                startHoverPolling();
+            } else {
+                stopHoverPolling();
+            }
+        });
+        if (settings.get_boolean('hover-monitor')) {
+            startHoverPolling();
+        }
         // Listen for popup theme changes and update popup style dynamically
         this._themeId = settings.connect('changed::popup-theme', () => {
             if (popup) {
@@ -286,9 +489,13 @@ export default class QuickDictFocusExtension extends Extension {
                         (_conn, res) => {
                             try {
                                 let data = Gio.DBus.session.call_finish(res).deepUnpack()[0];
-                                let results = JSON.parse(data);
+                                // Lookup 返回 {"word": cleaned, "results": [...]}
+                                let resp = JSON.parse(data);
+                                let results = (resp && resp.results) || [];
+                                let cleanWord = (resp && resp.word) || null;
                                 if (!results || results.length === 0) { closePopup(); return; }
-                                showResults(data);
+                                if (cleanWord) lastWord = cleanWord;
+                                showResults(JSON.stringify(results), cleanWord);
                             }
                             catch (e) {
                                 showError();
@@ -305,6 +512,7 @@ export default class QuickDictFocusExtension extends Extension {
 
     disable() {
         closePopup();
+        stopHoverPolling();
         if (this._errorId) { GLib.source_remove(this._errorId); this._errorId = 0; }
         if (settings) {
             if (this._settingsId) { settings.disconnect(this._settingsId); this._settingsId = null; }
@@ -314,8 +522,8 @@ export default class QuickDictFocusExtension extends Extension {
                 this._systemThemeId = null;
                 this._systemSettings = null;
             }
-            settings = null;
-        }
+            if (this._hoverMonitorId) { settings.disconnect(this._hoverMonitorId); this._hoverMonitorId = null; }
+            settings = null;        }
         if (panelButton) { panelButton.destroy(); panelButton = null; }
         if (popup) { global.stage.remove_child(popup); popup.destroy(); popup = null; }
         if (debounce) { GLib.source_remove(debounce); debounce = 0; }

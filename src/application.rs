@@ -99,7 +99,8 @@ impl DictionaryApplication {
                                 serde_json::json!({"name": a.dict_name, "text": text})
                             })
                             .collect();
-                        let json = serde_json::to_string(&items).unwrap_or_else(|_| "[]".into());
+                        let json = serde_json::json!({"word": cleaned, "results": items});
+                        let json = serde_json::to_string(&json).unwrap_or_else(|_| "[]".into());
                         let _ = sender.send(json);
                     }
                 }

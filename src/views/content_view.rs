@@ -377,7 +377,6 @@ pub(crate) fn html_to_pango_markup(html: &str) -> String {
                         }
                     }
                 }
-                _ => {}
             }
         } else if c == '&' {
             // HTML 实体解码

@@ -21,7 +21,7 @@ jobs:
     runs-on: ${{ matrix.runs-on }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Flatpak Builder
         run: |
@@ -38,7 +38,7 @@ jobs:
           org.freedesktop.Sdk.Extension.rust-stable//25.08
 
       - name: Cache Flatpak Builder
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             .flatpak-builder/cache
@@ -64,7 +64,7 @@ jobs:
           flatpak build-bundle repo quickdict-${{ matrix.arch }}.flatpak io.github.tigertall.QuickDict stable
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: flatpak-${{ matrix.arch }}
           path: quickdict-${{ matrix.arch }}.flatpak
@@ -74,7 +74,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Meson
         run: |
@@ -82,7 +82,7 @@ jobs:
           sudo apt-get install -y meson
 
       - name: Download All Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           pattern: flatpak-*
           merge-multiple: true

@@ -1,6 +1,6 @@
 [package]
 name = "quickdict"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.78"
 description = "A modern dictionary application with StarDict and DICT protocol support"
@@ -55,6 +55,9 @@ futures-util = "0.3"
 # 百度翻译 API (always needed)
 ureq = { version = "=2.0.2", features = ["tls"] }
 md5 = "0.7"
+
+# OCR 图像传输 base64 解码 (always needed)
+base64 = "0.22"
 
 [profile.release]
 opt-level = 2
