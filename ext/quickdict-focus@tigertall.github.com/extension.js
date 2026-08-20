@@ -31,6 +31,10 @@ let lastHoverX = -1;
 let lastHoverY = -1;
 let isHoverPopupActive = false;
 
+// 弹窗来源与异步竞态防护：划词（用户主动）优先于取词（被动）
+let popupSource = null;      // 'hover' | 'selection' | null
+let actionGeneration = 0;    // 每次用户动作递增，过期回调据此丢弃
+
 function isSystemDark() {
     try {
         let interfaceSettings = new Gio.Settings({ schema_id: 'org.gnome.desktop.interface' });
@@ -96,6 +100,7 @@ function closePopup() {
     popup.remove_all_children();
     ungrab();
     isHoverPopupActive = false;
+    popupSource = null;
 }
 
 function showResults(jsonStr, titleWord) {
@@ -293,6 +298,8 @@ function debugLog(msg) {
 }
 
 function triggerHoverLookup(x, y) {
+    // 划词弹窗存活期间，被动取词静默（用户主动选择优先）
+    if (popupSource === 'selection') return;
     // Position-based dedup: same spot within 5px already looked up
     if (Math.abs(x - lastOcrX) < 5 && Math.abs(y - lastOcrY) < 5) return;
     if (ocrInFlight) return;
@@ -314,10 +321,12 @@ function triggerHoverLookup(x, y) {
         let cx = x - sx;
         let cy = y - sy;
         debugLog('[QuickDict] OCR: captured ' + CAPTURE_W + 'x' + CAPTURE_H + ' at (' + sx + ',' + sy + ') cursor offset (' + cx + ',' + cy + ')');
+        const myGen = actionGeneration;
         Gio.DBus.session.call(DBUS_FACE, DBUS_PATH, DBUS_FACE, 'LookupImage',
             GLib.Variant.new('(siiii)', [b64, cx, cy, CAPTURE_W, CAPTURE_H]), null, Gio.DBusCallFlags.NONE, 10000, null,
             (_conn, res) => {
                 try {
+                    if (myGen !== actionGeneration) return; // 用户已划词，丢弃过期取词结果
                     let data = Gio.DBus.session.call_finish(res).deepUnpack()[0];
                     // LookupImage 返回 {"word": ..., "results": [...]}
                     let resp = JSON.parse(data);
@@ -331,8 +340,10 @@ function triggerHoverLookup(x, y) {
                     debugLog('[QuickDict] OCR: got ' + results.length + ' result(s), showing popup');
                     if (word) lastWord = word;
                     showResults(JSON.stringify(results), word);
+                    popupSource = 'hover';
                     isHoverPopupActive = true;
                 } catch (e) {
+                    if (myGen !== actionGeneration) return;
                     log('[QuickDict] OCR: LookupImage failed: ' + e);
                     closePopup();
                 }
@@ -348,6 +359,8 @@ function triggerHoverLookup(x, y) {
 function pollHover() {
     if (!settings || !settings.get_boolean('hover-monitor')) return;
     if (isHoverPopupActive) return;
+    // 划词弹窗存活期间，被动取词静默
+    if (popupSource === 'selection') return;
     let pointer = global.get_pointer();
     let x = pointer[0];
     let y = pointer[1];
@@ -484,10 +497,17 @@ export default class QuickDictFocusExtension extends Extension {
                     if (word.length < 2 || word.length > 1000) return;
                     if (text === lastText) return;
                     lastText = text; lastWord = word;
+                    // 划词优先：立即抢占现有弹窗，代际递增使在飞的取词结果过期
+                    actionGeneration++;
+                    const myGen = actionGeneration;
+                    if (popup && popup.visible) closePopup();
+                    // 立即标记 selection，使查询在飞期间 hover 也保持静默
+                    popupSource = 'selection';
                     Gio.DBus.session.call(DBUS_FACE, DBUS_PATH, DBUS_FACE, 'Lookup',
                         GLib.Variant.new('(s)', [word]), null, Gio.DBusCallFlags.NONE, 5000, null,
                         (_conn, res) => {
                             try {
+                                if (myGen !== actionGeneration) return; // 已被更新的划词取代
                                 let data = Gio.DBus.session.call_finish(res).deepUnpack()[0];
                                 // Lookup 返回 {"word": cleaned, "results": [...]}
                                 let resp = JSON.parse(data);
@@ -496,8 +516,10 @@ export default class QuickDictFocusExtension extends Extension {
                                 if (!results || results.length === 0) { closePopup(); return; }
                                 if (cleanWord) lastWord = cleanWord;
                                 showResults(JSON.stringify(results), cleanWord);
+                                popupSource = 'selection';
                             }
                             catch (e) {
+                                if (myGen !== actionGeneration) return;
                                 showError();
                                 closePopup();
                                 log('[QuickDict] showResults Exception' + e);
