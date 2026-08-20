@@ -29,7 +29,6 @@ let hoverPollId = 0;
 let hoverTimerId = 0;
 let lastHoverX = -1;
 let lastHoverY = -1;
-let isHoverPopupActive = false;
 
 // 弹窗来源与异步竞态防护：划词（用户主动）优先于取词（被动）
 let popupSource = null;      // 'hover' | 'selection' | null
@@ -95,30 +94,36 @@ function ungrab() {
 }
 
 function closePopup() {
+    clearPopupUi();
+    popupSource = null;
+}
+
+// 仅清理弹窗 UI，不重置来源状态（showResults 重建内容时使用）
+function clearPopupUi() {
     if (!popup) return;
     popup.visible = false;
     popup.remove_all_children();
     ungrab();
-    isHoverPopupActive = false;
-    popupSource = null;
 }
 
 function showResults(jsonStr, titleWord) {
+    // 弹出前复查焦点应用：划词/选词后若已切换到其他应用则不再弹出
+    if (!isAppAllowed()) {
+        closePopup();
+        return;
+    }
     const box = ensurePopup();
-    
-    closePopup();
+
+    clearPopupUi();
     box.set_height(-1);
 
     let results = [];
     try { results = JSON.parse(jsonStr); } catch (e) {}
     if (!results || results.length === 0) return;
 
-    // 单词标题（OCR 取词时显示识别出的单词）
-    if (titleWord) {
-        let theme = resolveTheme();
-        let wClass = (theme === 'light') ? 'quickdict-word-light' : 'quickdict-word-dark';
-        box.add_child(new St.Label({ text: titleWord, style_class: wClass }));
-    }
+    let theme = resolveTheme();
+    let wClass = (theme === 'light') ? 'quickdict-word-light' : 'quickdict-word-dark';
+    box.add_child(new St.Label({ text: titleWord, style_class: wClass }));
 
     const scroll = new St.ScrollView({ hscrollbar_policy: St.PolicyType.NEVER, vscrollbar_policy: St.PolicyType.AUTOMATIC,
         x_expand: true, y_expand: true });
@@ -176,7 +181,7 @@ function showResults(jsonStr, titleWord) {
     box.visible = true;
 
     activeSignals.push(box.connect('enter-event', () => {
-        isHoverPopupActive = true;
+        // 鼠标进入弹窗，取消退场定时器（弹窗来源状态已由 popupSource 维护）
         if (leaveTimeoutId) {
             // log('[QuickDict] 鼠标在 200ms 内重返弹窗内部，成功拦截并取消退场定时器');
             GLib.source_remove(leaveTimeoutId);
@@ -298,8 +303,8 @@ function debugLog(msg) {
 }
 
 function triggerHoverLookup(x, y) {
-    // 划词弹窗存活期间，被动取词静默（用户主动选择优先）
-    if (popupSource === 'selection') return;
+    // 弹窗存活或划词进行中，被动取词静默（用户主动选择优先）
+    if (popupSource) return;
     // Position-based dedup: same spot within 5px already looked up
     if (Math.abs(x - lastOcrX) < 5 && Math.abs(y - lastOcrY) < 5) return;
     if (ocrInFlight) return;
@@ -339,9 +344,9 @@ function triggerHoverLookup(x, y) {
                     }
                     debugLog('[QuickDict] OCR: got ' + results.length + ' result(s), showing popup');
                     if (word) lastWord = word;
-                    showResults(JSON.stringify(results), word);
+                    // 弹窗来源在调用前设置，showResults 内部清理不会重置它
                     popupSource = 'hover';
-                    isHoverPopupActive = true;
+                    showResults(JSON.stringify(results), word);
                 } catch (e) {
                     if (myGen !== actionGeneration) return;
                     log('[QuickDict] OCR: LookupImage failed: ' + e);
@@ -358,9 +363,8 @@ function triggerHoverLookup(x, y) {
 
 function pollHover() {
     if (!settings || !settings.get_boolean('hover-monitor')) return;
-    if (isHoverPopupActive) return;
-    // 划词弹窗存活期间，被动取词静默
-    if (popupSource === 'selection') return;
+    // 弹窗存活或划词进行中，被动取词静默
+    if (popupSource) return;
     let pointer = global.get_pointer();
     let x = pointer[0];
     let y = pointer[1];
@@ -515,15 +519,15 @@ export default class QuickDictFocusExtension extends Extension {
                                 let cleanWord = (resp && resp.word) || null;
                                 if (!results || results.length === 0) { closePopup(); return; }
                                 if (cleanWord) lastWord = cleanWord;
+                                // popupSource 已在划词触发时设为 'selection'，无需再设
                                 showResults(JSON.stringify(results), cleanWord);
-                                popupSource = 'selection';
                             }
                             catch (e) {
                                 if (myGen !== actionGeneration) return;
                                 showError();
                                 closePopup();
                                 log('[QuickDict] showResults Exception' + e);
-                             }
+                            }
                         }
                     );
                 });
@@ -545,7 +549,8 @@ export default class QuickDictFocusExtension extends Extension {
                 this._systemSettings = null;
             }
             if (this._hoverMonitorId) { settings.disconnect(this._hoverMonitorId); this._hoverMonitorId = null; }
-            settings = null;        }
+            settings = null;
+        }
         if (panelButton) { panelButton.destroy(); panelButton = null; }
         if (popup) { global.stage.remove_child(popup); popup.destroy(); popup = null; }
         if (debounce) { GLib.source_remove(debounce); debounce = 0; }
