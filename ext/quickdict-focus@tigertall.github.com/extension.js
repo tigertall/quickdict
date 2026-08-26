@@ -123,7 +123,11 @@ function showResults(jsonStr, titleWord) {
 
     let theme = resolveTheme();
     let wClass = (theme === 'light') ? 'quickdict-word-light' : 'quickdict-word-dark';
-    box.add_child(new St.Label({ text: titleWord, style_class: wClass }));
+    // 标题最多一行，超出以 ... 折叠，避免长选文压缩释义区域
+    const titleLabel = new St.Label({ text: titleWord, style_class: wClass });
+    titleLabel.clutter_text.single_line_mode = true;
+    titleLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+    box.add_child(titleLabel);
 
     const scroll = new St.ScrollView({ hscrollbar_policy: St.PolicyType.NEVER, vscrollbar_policy: St.PolicyType.AUTOMATIC,
         x_expand: true, y_expand: true });

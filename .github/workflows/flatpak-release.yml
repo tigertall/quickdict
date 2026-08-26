@@ -58,6 +58,12 @@ jobs:
             build-dir \
             io.github.tigertall.QuickDict.json
 
+      # 屏幕取词依赖沙箱内的 tesseract：验证二进制与 eng/chi_sim 语言数据就位
+      - name: Smoke Test Tesseract (OCR)
+        run: |
+          flatpak build build-dir tesseract --version
+          flatpak build build-dir tesseract --list-langs
+
       - name: Export and Bundle
         run: |
           flatpak build-export repo build-dir stable

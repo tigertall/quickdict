@@ -12,8 +12,12 @@
     "--socket=wayland",
     "--socket=fallback-x11",
     "--share=ipc",
+    "--socket=session-bus",
+    "--own-name=io.github.tigertall.QuickDict",
+    "--own-name=io.github.tigertall.QuickDict.Translator",
     "--device=dri",
-    "--share=network"
+    "--share=network",
+    "--env=TESSDATA_PREFIX=/app/share/tessdata"
   ],
  "build-options": {
     "append-path": "/usr/lib/sdk/rust-stable/bin",
@@ -23,6 +27,63 @@
     }
   },
   "modules": [
+    {
+      "name": "tesseract",
+      "buildsystem": "autotools",
+      "config-opts": [
+        "--disable-graphics"
+      ],
+      "modules": [
+        {
+          "name": "libleptonica",
+          "config-opts": [
+            "--disable-programs"
+          ],
+          "sources": [
+            {
+              "type": "archive",
+              "url": "https://github.com/DanBloomberg/leptonica/archive/refs/tags/1.87.0.tar.gz",
+              "sha256": "fa2b40c5caea96d1bb93a97486262aed8731b69ce25a84a6bf5d25323e33f631"
+            }
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.2.tar.gz",
+          "sha256": "6235ea0dae45ea137f59c09320406f5888383741924d98855bd2ce0d16b54f21"
+        }
+      ],
+      "cleanup": [
+        "/include",
+        "/lib/pkgconfig",
+        "/share/doc",
+        "/share/man",
+        "*.a",
+        "*.la"
+      ]
+    },
+    {
+      "name": "tessdata",
+      "buildsystem": "simple",
+      "build-commands": [
+        "install -Dm644 eng.traineddata ${FLATPAK_DEST}/share/tessdata/eng.traineddata",
+        "install -Dm644 chi_sim.traineddata ${FLATPAK_DEST}/share/tessdata/chi_sim.traineddata"
+      ],
+      "sources": [
+        {
+          "type": "file",
+          "url": "https://github.com/tesseract-ocr/tessdata_fast/raw/refs/tags/4.1.0/eng.traineddata",
+          "sha256": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2"
+        },
+        {
+          "type": "file",
+          "url": "https://github.com/tesseract-ocr/tessdata_fast/raw/refs/tags/4.1.0/chi_sim.traineddata",
+          "sha256": "a5fcb6f0db1e1d6d8522f39db4e848f05984669172e584e8d76b6b3141e1f730"
+        }
+      ]
+    },
     {
       "name": "quickdict",
       "buildsystem": "meson",

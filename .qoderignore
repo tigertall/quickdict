@@ -1,0 +1,8 @@
+flatapp/
+.flatpak-builder/
+.build-dir/
+repo/
+builddir/
+cargo/
+.git/
+target/

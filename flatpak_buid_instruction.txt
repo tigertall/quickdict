@@ -7,7 +7,19 @@ jq --slurpfile cargo cargo-sources.json \
   io.github.tigertall.QuickDict.json > tmp.json && \
 mv tmp.json io.github.tigertall.QuickDict.json
 
+# 1、构建
+flatpak-builder --user --force-clean --ccache --default-branch=stable build-dir io.github.tigertall.QuickDict.json
 
+# 2. 如果已结束，重新导出并打包
+flatpak build-export repo build-dir stable
+flatpak build-bundle repo quickdict-x86_64.flatpak io.github.tigertall.QuickDict stable
+
+# 3. 安装并验证
+flatpak install --user --reinstall ./quickdict-x86_64.flatpak
+
+
+
+# flathub 发布
 flatpak run org.flatpak.Builder --force-clean --install-deps-from=flathub --ccache --mirror-screenshots-url=https://dl.flathub.org/media/ --repo=repo flatapp io.github.tigertall.QuickDict.json
 
 
