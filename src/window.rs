@@ -213,7 +213,7 @@ impl MainWindow {
                 if query.is_empty() {
                     return;
                 }
-                let (res, articles) = {
+                let (res, exact_articles, online_article) = {
                     let mgr = match manager.try_borrow() {
                         Ok(m) => m,
                         Err(_) => {
@@ -222,22 +222,22 @@ impl MainWindow {
                         }
                     };
                     let res = engine.search(&query, &mgr);
-                    let mut articles: Vec<ArticleData> = Vec::new();
+                    // 仅收集精确匹配的本地文章
+                    let mut exact_articles: Vec<ArticleData> = Vec::new();
                     for dict in mgr.enabled() {
+                        if dict.kind().is_online() { continue; }
                         if let Some(r) = res
                             .iter()
                             .find(|r| r.score >= 1.0 && r.dict_name == dict.name())
                         {
                             if let Some(article) = dict.lookup_exact(&r.word) {
-                                articles.push(article);
+                                exact_articles.push(article);
                             }
                         }
                     }
-                    // 在线翻译（同步，与 search_word_direct 行为一致）
-                    if let Some(article) = mgr.try_online(&query) {
-                        articles.push(article);
-                    }
-                    (res, articles)
+                    // 在线翻译单独获取
+                    let online_article = mgr.try_online(&query);
+                    (res, exact_articles, online_article)
                 };
 
                 // 更新结果缓存
@@ -250,12 +250,22 @@ impl MainWindow {
                 };
 
                 // 显示结果
-                if res.is_empty() && articles.is_empty() {
-                    cv.widget().set_visible_child_name("waiting");
-                } else if !articles.is_empty() {
+                if !exact_articles.is_empty() {
+                    let mut articles = exact_articles;
+                    if let Some(online) = online_article {
+                        articles.push(online);
+                    }
                     cv.show_multi_articles(articles);
+                } else if !res.is_empty() {
+                    if let Some(online) = online_article {
+                        cv.show_combined(&online, &res);
+                    } else {
+                        cv.show_results(&res);
+                    }
+                } else if let Some(online) = online_article {
+                    cv.show_multi_articles(vec![online]);
                 } else {
-                    cv.show_results(&res);
+                    cv.widget().set_visible_child_name("waiting");
                 }
             });
         }

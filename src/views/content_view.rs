@@ -103,6 +103,10 @@ pub struct ContentView {
     updating: std::cell::Cell<bool>,
     /// 多词典文章容器
     articles_box: gtk4::Box,
+    /// 组合视图中的在线翻译区域
+    combined_online_area: gtk4::Box,
+    /// 组合视图中的候选词区域
+    combined_candidates_area: gtk4::Box,
 
     expanders: Rc<RefCell<Vec<ArticleExpander>>>,
     link_handler: RefCell<Option<LinkHandler>>,
@@ -134,11 +138,23 @@ impl ContentView {
         articles_scrolled.set_child(Some(&articles_box));
         articles_scrolled.set_vexpand(true);
 
+        // 组合视图：在线翻译 + 候选词列表
+        let combined_online_area = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        let combined_candidates_area = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        let combined_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        combined_box.append(&combined_online_area);
+        combined_box.append(&combined_candidates_area);
+
+        let combined_scrolled = gtk4::ScrolledWindow::new();
+        combined_scrolled.set_child(Some(&combined_box));
+        combined_scrolled.set_vexpand(true);
+
         let stack = gtk4::Stack::new();
         stack.add_named(&waiting_box, Some("waiting"));
         stack.add_named(&scrolled_list, Some("results"));
         stack.add_named(renderer.widget(), Some("article"));
         stack.add_named(&articles_scrolled, Some("articles"));
+        stack.add_named(&combined_scrolled, Some("combined"));
         stack.set_visible_child_name("waiting");
 
         // 加载词典释义样式
@@ -162,6 +178,8 @@ impl ContentView {
             word_list,
             updating: std::cell::Cell::new(false),
             articles_box,
+            combined_online_area,
+            combined_candidates_area,
             expanders: Rc::new(RefCell::new(Vec::new())),
             link_handler: RefCell::new(None),
         }
@@ -223,6 +241,49 @@ impl ContentView {
         self.word_list.set_results(results);
         self.end_update();
         self.stack.set_visible_child_name("results");
+    }
+
+    /// 显示在线翻译 + 候选词列表（组合视图）
+    pub fn show_combined(
+        &self,
+        online_article: &ArticleData,
+        results: &[crate::engine::types::SearchResult],
+    ) {
+        // 清除在线翻译区域
+        while let Some(child) = self.combined_online_area.first_child() {
+            self.combined_online_area.remove(&child);
+        }
+        // 清除候选词区域
+        while let Some(child) = self.combined_candidates_area.first_child() {
+            self.combined_candidates_area.remove(&child);
+        }
+
+        // 显示在线翻译文章
+        let handler = self.link_handler.borrow();
+        let expander = ArticleExpander::new(online_article, handler.as_ref());
+        self.combined_online_area.append(expander.widget());
+        self.expanders.borrow_mut().push(expander);
+
+        // 分隔线
+        let sep = gtk4::Separator::new(gtk4::Orientation::Horizontal);
+        sep.set_margin_top(4);
+        sep.set_margin_bottom(4);
+        self.combined_online_area.append(&sep);
+
+        // 用简单 Label 显示候选词
+        for r in results {
+            let text = format!("{}  —  {}  ({:.0}%)", r.word, r.dict_name, r.score * 100.0);
+            let label = gtk4::Label::new(Some(&text));
+            label.set_xalign(0.0);
+            label.set_margin_start(12);
+            label.set_margin_end(12);
+            label.set_margin_top(6);
+            label.set_margin_bottom(6);
+            label.set_selectable(true);
+            self.combined_candidates_area.append(&label);
+        }
+
+        self.stack.set_visible_child_name("combined");
     }
 }
 

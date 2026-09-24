@@ -53,7 +53,9 @@ impl SearchEngine {
         if query.is_empty() || query.len() > 30 { return Vec::new(); }
         let mut results: Vec<SearchResult> = Vec::new();
 
+        // 仅搜索本地词典（在线翻译由调用方单独处理）
         for dict in manager.enabled() {
+            if dict.kind().is_online() { continue; }
             if let Some(article) = dict.lookup_exact(&query) {
                 results.push(SearchResult {
                     dict_name: article.dict_name.clone(),
@@ -68,6 +70,7 @@ impl SearchEngine {
 
         if query.len() >= self.config.prefix_min_len {
             for dict in manager.enabled() {
+                if dict.kind().is_online() { continue; }
                 results.extend(dict.lookup_prefix(&query, self.config.prefix_limit));
             }
         }
@@ -82,6 +85,7 @@ impl SearchEngine {
         }
 
         for dict in manager.enabled() {
+            if dict.kind().is_online() { continue; }
             results.extend(
                 dict.lookup_fuzzy(&query, self.config.fuzzy_threshold, self.config.fuzzy_limit),
             );

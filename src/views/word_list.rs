@@ -18,30 +18,7 @@ impl WordList {
         let selection = gtk4::SingleSelection::new(Some(model.clone()));
         selection.set_autoselect(false);
 
-        let factory = gtk4::SignalListItemFactory::new();
-        factory.connect_setup(|_, item| {
-            let label = gtk4::Label::new(None);
-            label.set_xalign(0.0);
-            label.set_margin_start(12);
-            label.set_margin_end(12);
-            label.set_margin_top(6);
-            label.set_margin_bottom(6);
-            if let Some(list_item) = item.downcast_ref::<gtk4::ListItem>() {
-                list_item.set_child(Some(&label));
-            }
-        });
-
-        factory.connect_bind(|_, item| {
-            if let Some(list_item) = item.downcast_ref::<gtk4::ListItem>() {
-                if let Some(string_obj) = list_item.item().and_downcast::<gtk4::StringObject>() {
-                    if let Some(label) = list_item.child().and_downcast::<gtk4::Label>() {
-                        label.set_text(&string_obj.string());
-                    }
-                }
-            }
-        });
-
-        let list_view = gtk4::ListView::new(Some(selection.clone()), Some(factory));
+        let list_view = gtk4::ListView::new(Some(selection.clone()), Some(Self::create_factory()));
         list_view.set_vexpand(true);
 
         Self {
@@ -91,5 +68,30 @@ impl WordList {
 
     pub fn widget(&self) -> &gtk4::ListView {
         &self.list_view
+    }
+
+    fn create_factory() -> gtk4::SignalListItemFactory {
+        let factory = gtk4::SignalListItemFactory::new();
+        factory.connect_setup(|_, item| {
+            let label = gtk4::Label::new(None);
+            label.set_xalign(0.0);
+            label.set_margin_start(12);
+            label.set_margin_end(12);
+            label.set_margin_top(6);
+            label.set_margin_bottom(6);
+            if let Some(list_item) = item.downcast_ref::<gtk4::ListItem>() {
+                list_item.set_child(Some(&label));
+            }
+        });
+        factory.connect_bind(|_, item| {
+            if let Some(list_item) = item.downcast_ref::<gtk4::ListItem>() {
+                if let Some(string_obj) = list_item.item().and_downcast::<gtk4::StringObject>() {
+                    if let Some(label) = list_item.child().and_downcast::<gtk4::Label>() {
+                        label.set_text(&string_obj.string());
+                    }
+                }
+            }
+        });
+        factory
     }
 }
